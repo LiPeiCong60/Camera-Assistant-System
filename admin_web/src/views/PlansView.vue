@@ -276,9 +276,7 @@ onMounted(async () => {
     <section class="glass-card panel-card">
       <div class="panel-head">
         <div>
-          <span class="panel-kicker">M7-3</span>
           <h3>套餐管理</h3>
-          <p>当前支持套餐列表、新增、编辑、删除，并可为不同套餐绑定已有的 AI 配置。</p>
         </div>
         <div class="panel-actions">
           <el-button plain @click="loadPlans" :loading="loading">刷新列表</el-button>
@@ -484,23 +482,9 @@ onMounted(async () => {
   margin-bottom: 18px;
 }
 
-.panel-kicker {
-  color: var(--ca-primary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .panel-head h3 {
-  margin: 8px 0;
-  font-size: 28px;
-}
-
-.panel-head p {
   margin: 0;
-  color: var(--ca-muted);
-  line-height: 1.7;
+  font-size: 28px;
 }
 
 .panel-actions {

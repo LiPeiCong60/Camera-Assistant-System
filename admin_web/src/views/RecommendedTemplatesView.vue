@@ -175,163 +175,188 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="glass-card page-section">
-    <div class="page-section__header">
-      <div>
-        <h3>推荐默认模板</h3>
-        <p>这些模板会直接下发到手机端模板列表，供用户快速选择，不影响用户自己创建的模板。</p>
-      </div>
-      <el-button type="primary" @click="openCreateDialog">新增推荐模板</el-button>
-    </div>
-
-    <el-alert
-      v-if="pageErrorMessage"
-      class="section-alert"
-      type="error"
-      :closable="false"
-      :title="pageErrorMessage"
-    />
-
-    <el-table v-loading="loading" :data="templates" border>
-      <el-table-column prop="id" label="ID" min-width="80" />
-      <el-table-column prop="name" label="模板名称" min-width="180" />
-      <el-table-column prop="template_type" label="类型" min-width="120" />
-      <el-table-column prop="recommended_sort_order" label="推荐排序" min-width="110" />
-      <el-table-column label="数据摘要" min-width="160">
-        <template #default="{ row }">
-          {{ previewSummary(row) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" min-width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="更新时间" min-width="180">
-        <template #default="{ row }">
-          {{ formatDate(row.updated_at) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" min-width="170" fixed="right">
-        <template #default="{ row }">
-          <div class="table-actions">
-            <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-            <el-button
-              link
-              type="danger"
-              :loading="deletingTemplateId === row.id"
-              @click="confirmDelete(row)"
-            >
-              删除
-            </el-button>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
-  </section>
-
-  <el-dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    width="760px"
-    destroy-on-close
-    @closed="resetForm"
-  >
-    <el-alert
-      v-if="dialogErrorMessage"
-      class="section-alert"
-      type="error"
-      :closable="false"
-      :title="dialogErrorMessage"
-    />
-
-    <el-form label-position="top" class="dialog-form">
-      <div class="form-grid">
-        <el-form-item label="模板名称">
-          <el-input v-model="form.name" maxlength="100" />
-        </el-form-item>
-
-        <el-form-item label="模板类型">
-          <el-select v-model="form.template_type">
-            <el-option label="姿态模板" value="pose" />
-            <el-option label="背景模板" value="background" />
-            <el-option label="构图模板" value="composition" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="推荐排序">
-          <el-input-number v-model="form.recommended_sort_order" :min="0" :max="999" />
-        </el-form-item>
-
-        <el-form-item label="状态">
-          <el-select v-model="form.status">
-            <el-option label="active" value="active" />
-            <el-option label="archived" value="archived" />
-          </el-select>
-        </el-form-item>
+  <div class="page-grid">
+    <section class="glass-card panel-card">
+      <div class="panel-head">
+        <div>
+          <h3>推荐默认模板</h3>
+        </div>
+        <div class="panel-actions">
+          <el-button type="primary" @click="openCreateDialog">新增推荐模板</el-button>
+        </div>
       </div>
 
-      <div class="form-grid">
-        <el-form-item label="来源图片 URL">
-          <el-input v-model="form.source_image_url" placeholder="可留空" />
-        </el-form-item>
+      <el-alert
+        v-if="pageErrorMessage"
+        class="panel-alert"
+        type="error"
+        :closable="false"
+        :title="pageErrorMessage"
+      />
 
-        <el-form-item label="预览图片 URL">
-          <el-input v-model="form.preview_image_url" placeholder="可留空" />
-        </el-form-item>
-      </div>
+      <el-table v-loading="loading" :data="templates" stripe class="data-table">
+        <el-table-column prop="id" label="ID" min-width="80" />
+        <el-table-column prop="name" label="模板名称" min-width="180" />
+        <el-table-column prop="template_type" label="类型" min-width="120" />
+        <el-table-column prop="recommended_sort_order" label="推荐排序" min-width="110" />
+        <el-table-column label="数据摘要" min-width="160">
+          <template #default="{ row }">
+            {{ previewSummary(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" min-width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="更新时间" min-width="180">
+          <template #default="{ row }">
+            {{ formatDate(row.updated_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="170" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
+              <el-button
+                link
+                type="danger"
+                :loading="deletingTemplateId === row.id"
+                @click="confirmDelete(row)"
+              >
+                删除
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
 
-      <el-form-item label="模板数据 JSON">
-        <el-input
-          v-model="form.template_data_text"
-          type="textarea"
-          :rows="14"
-          placeholder="请输入有效 JSON"
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogTitle"
+      width="760px"
+      destroy-on-close
+      @closed="resetForm"
+    >
+      <div class="dialog-body">
+        <el-alert
+          v-if="dialogErrorMessage"
+          class="panel-alert"
+          type="error"
+          :closable="false"
+          :title="dialogErrorMessage"
         />
-      </el-form-item>
-    </el-form>
 
-    <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="submitTemplate">保存</el-button>
-    </template>
-  </el-dialog>
+        <el-form label-position="top" class="dialog-form">
+          <div class="form-grid">
+            <el-form-item label="模板名称">
+              <el-input v-model="form.name" maxlength="100" />
+            </el-form-item>
+
+            <el-form-item label="模板类型">
+              <el-select v-model="form.template_type">
+                <el-option label="姿态模板" value="pose" />
+                <el-option label="背景模板" value="background" />
+                <el-option label="构图模板" value="composition" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="推荐排序">
+              <el-input-number v-model="form.recommended_sort_order" :min="0" :max="999" />
+            </el-form-item>
+
+            <el-form-item label="状态">
+              <el-select v-model="form.status">
+                <el-option label="active" value="active" />
+                <el-option label="archived" value="archived" />
+              </el-select>
+            </el-form-item>
+          </div>
+
+          <div class="form-grid">
+            <el-form-item label="来源图片 URL">
+              <el-input v-model="form.source_image_url" placeholder="可留空" />
+            </el-form-item>
+
+            <el-form-item label="预览图片 URL">
+              <el-input v-model="form.preview_image_url" placeholder="可留空" />
+            </el-form-item>
+          </div>
+
+          <el-form-item label="模板数据 JSON">
+            <el-input
+              v-model="form.template_data_text"
+              type="textarea"
+              :rows="14"
+              placeholder="请输入有效 JSON"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submitTemplate">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
 
 <style scoped>
-.page-section {
+.page-grid {
   display: grid;
   gap: 18px;
 }
 
-.page-section__header {
+.panel-card {
+  padding: 22px;
+}
+
+.panel-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  flex-wrap: wrap;
+  margin-bottom: 18px;
 }
 
-.page-section__header h3 {
+.panel-head h3 {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 28px;
 }
 
-.page-section__header p {
+.panel-head p {
   margin: 0;
   color: var(--ca-muted);
   line-height: 1.7;
   max-width: 720px;
 }
 
-.section-alert {
-  margin-bottom: 4px;
+.panel-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panel-alert {
+  margin-bottom: 16px;
+}
+
+.data-table {
+  width: 100%;
 }
 
 .table-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.dialog-body {
+  max-height: 70vh;
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .dialog-form {
@@ -345,7 +370,11 @@ onMounted(() => {
   gap: 16px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 960px) {
+  .panel-head {
+    flex-direction: column;
+  }
+
   .form-grid {
     grid-template-columns: 1fr;
   }

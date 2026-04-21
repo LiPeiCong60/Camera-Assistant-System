@@ -4,10 +4,15 @@ import '../../models/normalized_geometry.dart';
 import 'overlay_scene.dart';
 
 class CameraOverlayPainter extends CustomPainter {
-  const CameraOverlayPainter({required this.scene, required this.settings});
+  const CameraOverlayPainter({
+    required this.scene,
+    required this.settings,
+    this.mirrorDynamicOverlays = false,
+  });
 
   final OverlayScene scene;
   final OverlaySettings settings;
+  final bool mirrorDynamicOverlays;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -44,7 +49,7 @@ class CameraOverlayPainter extends CustomPainter {
       ..color = const Color(0xFF00D084);
 
     final rect = Rect.fromLTWH(
-      scene.bodyBox.left * size.width,
+      _resolveBodyBoxLeft(size),
       scene.bodyBox.top * size.height,
       scene.bodyBox.width * size.width,
       scene.bodyBox.height * size.height,
@@ -70,7 +75,10 @@ class CameraOverlayPainter extends CustomPainter {
       ..color = const Color(0xFF42C6FF);
 
     final points = scene.skeletonPoints
-        .map((point) => _offsetFromPoint(point, size))
+        .map(
+          (point) =>
+              _offsetFromPoint(point, size, mirrored: mirrorDynamicOverlays),
+        )
         .toList(growable: false);
     const skeletonEdges = <List<int>>[
       <int>[0, 1],
@@ -94,12 +102,26 @@ class CameraOverlayPainter extends CustomPainter {
     }
   }
 
-  Offset _offsetFromPoint(NormalizedPoint point, Size size) {
-    return Offset(point.x * size.width, point.y * size.height);
+  double _resolveBodyBoxLeft(Size size) {
+    final normalizedLeft = mirrorDynamicOverlays
+        ? 1 - scene.bodyBox.left - scene.bodyBox.width
+        : scene.bodyBox.left;
+    return normalizedLeft * size.width;
+  }
+
+  Offset _offsetFromPoint(
+    NormalizedPoint point,
+    Size size, {
+    bool mirrored = false,
+  }) {
+    final normalizedX = mirrored ? 1 - point.x : point.x;
+    return Offset(normalizedX * size.width, point.y * size.height);
   }
 
   @override
   bool shouldRepaint(covariant CameraOverlayPainter oldDelegate) {
-    return oldDelegate.scene != scene || oldDelegate.settings != settings;
+    return oldDelegate.scene != scene ||
+        oldDelegate.settings != settings ||
+        oldDelegate.mirrorDynamicOverlays != mirrorDynamicOverlays;
   }
 }

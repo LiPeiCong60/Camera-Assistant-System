@@ -76,11 +76,11 @@ onMounted(() => {
     <section class="glass-card panel-card">
       <div class="panel-head">
         <div>
-          <span class="panel-kicker">M7-4</span>
           <h3>AI 任务记录</h3>
-          <p>这里先提供任务表格和详情弹层，方便查看 AI 任务产出与结果结构。</p>
         </div>
-        <el-button plain @click="loadAiTasks" :loading="loading">刷新任务</el-button>
+        <div class="panel-actions">
+          <el-button plain @click="loadAiTasks" :loading="loading">刷新任务</el-button>
+        </div>
       </div>
 
       <el-alert
@@ -172,27 +172,29 @@ onMounted(() => {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
 }
 
 .summary-card {
-  padding: 18px 20px;
-  display: grid;
-  gap: 8px;
+  padding: 20px 22px;
 }
 
 .summary-card span {
+  display: block;
   color: var(--ca-muted);
   font-size: 13px;
 }
 
 .summary-card strong {
+  display: block;
+  margin-top: 10px;
   font-size: 32px;
+  color: var(--ca-green-900);
 }
 
-.summary-card--accent {
-  background: linear-gradient(180deg, rgba(217, 140, 59, 0.13), rgba(255, 255, 255, 0.92));
+.summary-card--accent strong {
+  color: var(--ca-sand-700);
 }
 
 .panel-card {
@@ -202,36 +204,34 @@ onMounted(() => {
 .panel-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
   align-items: flex-start;
+  gap: 16px;
   margin-bottom: 18px;
 }
 
-.panel-kicker {
-  color: var(--ca-primary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .panel-head h3 {
-  margin: 8px 0;
-  font-size: 28px;
+  margin: 0;
+  font-size: 26px;
 }
 
 .panel-head p {
-  margin: 0;
+  margin: 10px 0 0;
   color: var(--ca-muted);
   line-height: 1.7;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .panel-alert {
   margin-bottom: 16px;
 }
 
-.data-table {
-  width: 100%;
+.data-table :deep(.el-table__cell) {
+  padding: 14px 0;
 }
 
 .detail-grid {
@@ -255,14 +255,12 @@ onMounted(() => {
 }
 
 @media (max-width: 960px) {
-  .summary-grid {
-    grid-template-columns: 1fr;
+  .panel-head {
+    flex-direction: column;
   }
 
-  .panel-head,
   .detail-grid {
     grid-template-columns: 1fr;
-    flex-direction: column;
   }
 }
 </style>

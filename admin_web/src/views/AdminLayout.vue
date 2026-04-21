@@ -11,10 +11,6 @@ const router = useRouter();
 const store = useAppStore();
 
 const pageTitle = computed(() => route.meta.layoutTitle ?? route.meta.title ?? "管理后台");
-const pageDescription = computed(
-  () => route.meta.layoutDescription ?? "当前阶段先建立完整后台壳层，业务页按批次逐步补齐。",
-);
-
 function logout() {
   store.clearSession();
   router.replace({ name: "login" });
@@ -29,7 +25,6 @@ function logout() {
       <main class="admin-main">
         <AdminTopbar
           :title="pageTitle"
-          :description="pageDescription"
           :user-name="store.currentUser?.display_name ?? ''"
           :user-role="store.currentUser?.role ?? ''"
         />
@@ -49,12 +44,12 @@ function logout() {
 .admin-grid {
   display: grid;
   grid-template-columns: 290px minmax(0, 1fr);
-  gap: 20px;
+  gap: 22px;
 }
 
 .admin-main {
   display: grid;
-  gap: 18px;
+  gap: 20px;
   align-content: start;
 }
 
@@ -63,6 +58,12 @@ function logout() {
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.toolbar :deep(.el-button) {
+  min-height: 42px;
+  border-radius: 12px;
+  font-weight: 700;
 }
 
 @media (max-width: 1100px) {

@@ -41,7 +41,6 @@ function navigate(routeName) {
     <div class="brand-block">
       <p class="brand-kicker">Camera Assistant</p>
       <h1>管理后台</h1>
-      <p class="brand-description">先把稳定骨架搭好，再逐页填充业务能力。</p>
     </div>
 
     <div class="nav-groups">
@@ -65,64 +64,62 @@ function navigate(routeName) {
 <style scoped>
 .sidebar {
   min-height: calc(100vh - 48px);
-  padding: 24px 18px;
+  padding: 28px 18px 22px;
   display: grid;
   align-content: start;
-  gap: 28px;
+  gap: 30px;
 }
 
 .brand-block {
-  padding: 10px 8px 0;
+  padding: 6px 10px 0;
 }
 
 .brand-kicker {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   font-size: 12px;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--ca-primary);
   font-weight: 700;
 }
 
 .brand-block h1 {
-  margin: 0 0 10px;
-  font-size: 28px;
-}
-
-.brand-description {
   margin: 0;
-  color: var(--ca-muted);
-  line-height: 1.7;
-  font-size: 14px;
+  font-size: clamp(34px, 4vw, 42px);
+  line-height: 0.96;
+  font-weight: 700;
+  color: var(--ca-ink);
 }
 
 .nav-groups {
   display: grid;
-  gap: 22px;
+  gap: 24px;
 }
 
 .nav-group {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .nav-group-title {
-  padding: 0 8px;
-  font-size: 12px;
-  color: var(--ca-muted);
-  letter-spacing: 0.1em;
+  padding: 0 10px;
+  font-size: 11px;
+  color: rgba(31, 42, 36, 0.46);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+  font-weight: 700;
 }
 
 .nav-item {
-  min-height: 44px;
+  min-height: 50px;
   border: none;
-  border-radius: 14px;
+  border-radius: 16px;
   background: transparent;
   color: var(--ca-ink);
   text-align: left;
-  padding: 0 14px;
-  font-size: 15px;
+  padding: 0 16px;
+  font-size: 16px;
+  font-weight: 500;
   transition: 0.18s ease;
   cursor: pointer;
 }
@@ -132,8 +129,8 @@ function navigate(routeName) {
 }
 
 .nav-item--active {
-  background: linear-gradient(90deg, rgba(30, 111, 92, 0.18), rgba(30, 111, 92, 0.08));
+  background: linear-gradient(90deg, rgba(30, 111, 92, 0.22), rgba(30, 111, 92, 0.08));
   color: var(--ca-primary);
-  font-weight: 700;
+  font-weight: 600;
 }
 </style>

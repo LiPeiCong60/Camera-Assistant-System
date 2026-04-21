@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import '../../models/auth_session.dart';
 import '../../models/plan_summary.dart';
+import '../../models/subscription_info.dart';
 import '../auth/auth_controller.dart';
 import '../camera/camera_capture_page.dart';
 import '../device_link/device_link_page.dart';
 import '../history/history_page.dart';
+import 'plan_detail_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key, required this.controller});
@@ -18,6 +21,7 @@ class HomePage extends StatelessWidget {
       builder: (context, _) {
         final profile = controller.profile;
         final session = controller.session;
+        final currentPlan = _currentPlan(controller);
 
         return Scaffold(
           appBar: AppBar(
@@ -59,133 +63,63 @@ class HomePage extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          profile?.displayName ??
-                              session?.user.displayName ??
-                              '未命名用户',
-                          style: Theme.of(context).textTheme.headlineSmall
+                          '欢迎回来',
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.88),
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 2.8,
+                              ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          '你好，${profile?.displayName ?? session?.user.displayName ?? '用户'}',
+                          style: Theme.of(context).textTheme.displaySmall
                               ?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '从这里开始拍摄、查看历史记录或进入设备联动。当前账号的套餐、订阅与 AI 能力会自动同步到移动端。',
-                          style: Theme.of(context).textTheme.bodyLarge
-                              ?.copyWith(
-                                color: Colors.white.withValues(alpha: 0.88),
-                                height: 1.5,
+                                height: 0.98,
                               ),
                         ),
                         const SizedBox(height: 18),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
+                        Row(
                           children: <Widget>[
-                            _InfoChip(
-                              label: '用户编码',
-                              value:
-                                  profile?.userCode ??
-                                  (session == null
-                                      ? '-'
-                                      : 'USER_${session.user.id}'),
+                            Expanded(
+                              child: _InfoChip(
+                                label: '用户编号',
+                                value:
+                                    profile?.userCode ??
+                                    (session == null
+                                        ? '-'
+                                        : 'USER_${session.user.id}'),
+                              ),
                             ),
-                            _InfoChip(
-                              label: '角色',
-                              value: profile?.role ?? session?.user.role ?? '-',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _InfoChip(
+                                label: '角色',
+                                value:
+                                    profile?.role ?? session?.user.role ?? '-',
+                              ),
                             ),
-                            _InfoChip(
-                              label: '状态',
-                              value:
-                                  profile?.status ??
-                                  session?.user.status ??
-                                  '-',
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _InfoChip(
+                                label: '状态',
+                                value:
+                                    profile?.status ??
+                                    session?.user.status ??
+                                    '-',
+                              ),
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 18),
-                        FilledButton.icon(
-                          onPressed: session == null
-                              ? null
-                              : () async {
-                                  await Navigator.of(context).push<void>(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => CameraCapturePage(
-                                        apiService: controller.apiService,
-                                        accessToken: session.accessToken,
-                                      ),
-                                    ),
-                                  );
-                                },
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          label: const Text('开始拍摄'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFE0A458),
-                            foregroundColor: const Color(0xFF17313A),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: session == null
-                              ? null
-                              : () async {
-                                  await Navigator.of(context).push<void>(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => HistoryPage(
-                                        apiService: controller.apiService,
-                                        accessToken: session.accessToken,
-                                      ),
-                                    ),
-                                  );
-                                },
-                          icon: const Icon(Icons.history_outlined),
-                          label: const Text('查看历史记录'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.6),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 14,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        OutlinedButton.icon(
-                          onPressed: session == null
-                              ? null
-                              : () async {
-                                  await Navigator.of(context).push<void>(
-                                    MaterialPageRoute<void>(
-                                      builder: (_) => DeviceLinkPage(
-                                        mobileApiService: controller.apiService,
-                                        accessToken: session.accessToken,
-                                      ),
-                                    ),
-                                  );
-                                },
-                          icon: const Icon(Icons.router_outlined),
-                          label: const Text('进入设备联动'),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            side: BorderSide(
-                              color: Colors.white.withValues(alpha: 0.6),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 14,
-                            ),
-                          ),
                         ),
                       ],
                     ),
                   ),
                 ),
+                const SizedBox(height: 20),
+                _QuickActionSection(controller: controller, session: session),
                 const SizedBox(height: 20),
                 if (controller.errorMessage != null)
                   Padding(
@@ -199,14 +133,23 @@ class HomePage extends StatelessWidget {
                     ),
                   ),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Expanded(
                       child: _StatusCard(
                         title: '当前订阅',
-                        value: controller.subscription?.status ?? '未开通',
-                        note: controller.subscription == null
-                            ? '当前账号还没有激活中的套餐订阅'
-                            : 'plan_id: ${controller.subscription!.planId}',
+                        value: _subscriptionStatusLabel(controller),
+                        note: currentPlan == null
+                            ? '点击查看套餐详情'
+                            : '${currentPlan.name} · 点击查看详情',
+                        onTap: session == null
+                            ? null
+                            : () => _openPlanDetails(
+                                context,
+                                controller: controller,
+                                accessToken: session.accessToken,
+                                initialPlanId: controller.subscription?.planId,
+                              ),
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -214,45 +157,22 @@ class HomePage extends StatelessWidget {
                       child: _StatusCard(
                         title: '服务连接',
                         value: controller.isRefreshing ? '同步中' : '已接通',
-                        note: '账号、套餐与订阅数据已同步',
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 20),
-                const _FeatureCallout(
-                  icon: Icons.photo_camera_back_outlined,
-                  title: '拍摄主链已经就绪',
-                  subtitle:
-                      '支持打开摄像头、切换前后摄、拍照、上传分析，并查看最近一次拍摄回显结果。',
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  '套餐预览',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 12),
-                if (controller.plans.isEmpty)
-                  const _EmptyBlock(
-                    title: '暂无套餐数据',
-                    subtitle: '确认 backend 中已有计划数据，或者点击右上角刷新。',
-                  )
-                else
-                  ...controller.plans.map(_buildPlanCard),
-                const SizedBox(height: 20),
-                Text(
-                  '常用入口',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 12),
-                const _EmptyBlock(
-                  title: '历史记录与设备联动',
-                  subtitle:
-                      '建议先从拍摄页完成一次上传分析，再进入历史记录和设备联动页查看结果与设备状态。',
+                _PlanSection(
+                  plans: controller.plans,
+                  subscription: controller.subscription,
+                  onPlanTap: session == null
+                      ? null
+                      : (plan) => _openPlanDetails(
+                          context,
+                          controller: controller,
+                          accessToken: session.accessToken,
+                          initialPlanId: plan.id,
+                        ),
                 ),
               ],
             ),
@@ -262,49 +182,420 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Widget _buildPlanCard(PlanSummary plan) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: const <BoxShadow>[
-            BoxShadow(
-              color: Color(0x12000000),
-              blurRadius: 18,
-              offset: Offset(0, 10),
+  String _subscriptionStatusLabel(AuthController controller) {
+    final subscription = controller.subscription;
+    if (subscription == null) {
+      return '未开通';
+    }
+    if (subscription.status == 'active') {
+      return '生效中';
+    }
+    return subscription.status;
+  }
+
+  PlanSummary? _currentPlan(AuthController controller) {
+    final subscription = controller.subscription;
+    if (subscription == null) {
+      return null;
+    }
+    for (final plan in controller.plans) {
+      if (plan.id == subscription.planId) {
+        return plan;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _openPlanDetails(
+    BuildContext context, {
+    required AuthController controller,
+    required String accessToken,
+    int? initialPlanId,
+  }) {
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => PlanDetailPage(
+          controller: controller,
+          accessToken: accessToken,
+          initialPlanId: initialPlanId,
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActionSection extends StatelessWidget {
+  const _QuickActionSection({required this.controller, required this.session});
+
+  final AuthController controller;
+  final AuthSession? session;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '快捷入口',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 12),
+        _QuickActionCard(
+          title: '开始拍摄',
+          subtitle: '进入拍摄工作台',
+          icon: Icons.camera_alt_outlined,
+          highlighted: true,
+          compact: false,
+          onTap: session == null
+              ? null
+              : () async {
+                  await Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CameraCapturePage(
+                        apiService: controller.apiService,
+                        accessToken: session!.accessToken,
+                      ),
+                    ),
+                  );
+                },
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: _QuickActionCard(
+                title: '查看历史记录',
+                subtitle: '查看历史会话与抓拍',
+                icon: Icons.history_outlined,
+                compact: true,
+                onTap: session == null
+                    ? null
+                    : () async {
+                        await Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => HistoryPage(
+                              apiService: controller.apiService,
+                              accessToken: session!.accessToken,
+                            ),
+                          ),
+                        );
+                      },
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: _QuickActionCard(
+                title: '进入设备联动',
+                subtitle: '连接设备并执行控制',
+                icon: Icons.router_outlined,
+                compact: true,
+                onTap: session == null
+                    ? null
+                    : () async {
+                        await Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => DeviceLinkPage(
+                              mobileApiService: controller.apiService,
+                              accessToken: session!.accessToken,
+                            ),
+                          ),
+                        );
+                      },
+              ),
             ),
           ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                plan.name,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF17313A),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                plan.priceLabel,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF2C6E49),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '套餐编码：${plan.planCode}  ·  状态：${plan.status}',
-                style: const TextStyle(color: Color(0xFF4B5563), height: 1.5),
+      ],
+    );
+  }
+}
+
+class _QuickActionCard extends StatelessWidget {
+  const _QuickActionCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+    this.highlighted = false,
+    required this.compact,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Future<void> Function()? onTap;
+  final bool highlighted;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(24),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: highlighted ? const Color(0xFF17313A) : Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: highlighted
+                  ? const Color(0xFF17313A)
+                  : const Color(0xFFDCE5E7),
+            ),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 18,
+                offset: Offset(0, 10),
               ),
             ],
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            child: Padding(
+              padding: EdgeInsets.all(compact ? 18 : 20),
+              child: compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Icon(
+                          icon,
+                          color: highlighted
+                              ? const Color(0xFFE0A458)
+                              : const Color(0xFF0D5C63),
+                          size: 26,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: highlighted
+                                ? Colors.white
+                                : const Color(0xFF17313A),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          subtitle,
+                          style: TextStyle(
+                            color: highlighted
+                                ? Colors.white.withValues(alpha: 0.78)
+                                : const Color(0xFF4B5563),
+                            height: 1.45,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      children: <Widget>[
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: highlighted
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : const Color(0xFFEAF2F4),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Icon(
+                              icon,
+                              color: highlighted
+                                  ? const Color(0xFFE0A458)
+                                  : const Color(0xFF0D5C63),
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                title,
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                  color: highlighted
+                                      ? Colors.white
+                                      : const Color(0xFF17313A),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                subtitle,
+                                style: TextStyle(
+                                  color: highlighted
+                                      ? Colors.white.withValues(alpha: 0.78)
+                                      : const Color(0xFF4B5563),
+                                  height: 1.45,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlanSection extends StatelessWidget {
+  const _PlanSection({
+    required this.plans,
+    required this.subscription,
+    this.onPlanTap,
+  });
+
+  final List<PlanSummary> plans;
+  final SubscriptionInfo? subscription;
+  final ValueChanged<PlanSummary>? onPlanTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFDCE5E7)),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+          childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          title: Text(
+            '可用套餐',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            plans.isEmpty
+                ? '暂无套餐数据'
+                : subscription == null
+                ? '共 ${plans.length} 个套餐'
+                : '已开通 1 个套餐，可切换查看其余套餐',
+            style: const TextStyle(color: Color(0xFF5A6B70)),
+          ),
+          children: <Widget>[
+            if (plans.isEmpty)
+              const _EmptyBlock(
+                title: '暂无套餐数据',
+                subtitle: '确认 backend 中已有计划数据，或者点击右上角刷新。',
+              )
+            else
+              ...plans.map(_buildPlanCard),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlanCard(PlanSummary plan) {
+    final isCurrentPlan = subscription?.planId == plan.id;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPlanTap == null ? null : () => onPlanTap!(plan),
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAF8),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          plan.name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF17313A),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: isCurrentPlan
+                              ? const Color(0xFF17313A)
+                              : const Color(0xFFE7F1EC),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            isCurrentPlan ? '当前订阅' : '可购买',
+                            style: TextStyle(
+                              color: isCurrentPlan
+                                  ? Colors.white
+                                  : const Color(0xFF2C6E49),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    plan.priceLabel,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF2C6E49),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '套餐编码：${plan.planCode}  ·  状态：${plan.status}',
+                    style: const TextStyle(
+                      color: Color(0xFF4B5563),
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          isCurrentPlan ? '点击查看续费与额度信息' : '点击查看套餐详情与购买信息',
+                          style: const TextStyle(
+                            color: Color(0xFF5A6B70),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.chevron_right, color: Color(0xFF5A6B70)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -326,13 +617,31 @@ class _InfoChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Text(
-          '$label：$value',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-          ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -343,114 +652,80 @@ class _StatusCard extends StatelessWidget {
   const _StatusCard({
     required this.title,
     required this.value,
-    required this.note,
+    this.note,
+    this.onTap,
   });
 
   final String title;
   final String value;
-  final String note;
+  final String? note;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFFDCE5E7)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF17313A),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF17313A),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              note,
-              style: const TextStyle(color: Color(0xFF4B5563), height: 1.45),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FeatureCallout extends StatelessWidget {
-  const _FeatureCallout({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFFDCE5E7)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xFFEAF2F4),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Icon(icon, color: const Color(0xFF0D5C63), size: 28),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
+        child: Ink(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFDCE5E7)),
+          ),
+          child: SizedBox(
+            height: 156,
+            child: Padding(
+              padding: const EdgeInsets.all(18),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.start,
                 children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF17313A),
+                          ),
+                        ),
+                      ),
+                      if (onTap != null)
+                        const Icon(
+                          Icons.chevron_right,
+                          color: Color(0xFF5A6B70),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
                   Text(
-                    title,
+                    value,
                     style: const TextStyle(
-                      fontSize: 18,
+                      fontSize: 24,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF17313A),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: Color(0xFF4B5563),
-                      height: 1.55,
+                  if (note != null && note!.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      note!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF4B5563),
+                        height: 1.45,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );

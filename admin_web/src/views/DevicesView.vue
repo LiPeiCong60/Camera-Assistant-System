@@ -208,69 +208,56 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="page-shell">
-    <header class="page-header">
-      <div>
-        <p class="page-kicker">M8 收口</p>
-        <h1>设备列表</h1>
-        <p class="page-description">
-          这里已经补齐设备的新增、编辑和删除。你可以在后台直接维护设备信息、绑定用户和控制地址。
-        </p>
-      </div>
-      <div class="page-actions">
-        <el-button :loading="loading" @click="loadDevices">刷新列表</el-button>
-        <el-button type="primary" @click="openCreateDialog">新建设备</el-button>
-      </div>
-    </header>
-
-    <el-alert
-      v-if="pageErrorMessage"
-      class="page-alert"
-      type="error"
-      :closable="false"
-      :title="pageErrorMessage"
-      show-icon
-    />
-
-    <el-alert
-      v-if="!userOptions.length"
-      class="page-alert"
-      type="warning"
-      :closable="false"
-      title="当前还没有可绑定的用户。请先在“用户管理”里创建用户后，再新增设备。"
-      show-icon
-    />
-
+  <div class="page-grid">
     <section class="summary-grid">
-      <article class="summary-card">
-        <span class="summary-label">设备总数</span>
+      <article class="glass-card summary-card">
+        <span>设备总数</span>
         <strong>{{ devices.length }}</strong>
       </article>
-      <article class="summary-card">
-        <span class="summary-label">在线设备</span>
+      <article class="glass-card summary-card summary-card--accent">
+        <span>在线设备</span>
         <strong>{{ onlineCount }}</strong>
       </article>
-      <article class="summary-card">
-        <span class="summary-label">离线设备</span>
+      <article class="glass-card summary-card">
+        <span>离线设备</span>
         <strong>{{ offlineCount }}</strong>
       </article>
-      <article class="summary-card">
-        <span class="summary-label">已绑定用户</span>
+      <article class="glass-card summary-card">
+        <span>已绑定用户</span>
         <strong>{{ boundUserCount }}</strong>
       </article>
     </section>
 
-    <el-card shadow="never" class="table-card">
-      <template #header>
-        <div class="card-header">
-          <div>
-            <h2>设备清单</h2>
-            <p>当前展示后端登记的全部设备信息，并提供基础维护操作。</p>
-          </div>
+    <section class="glass-card panel-card">
+      <div class="panel-head">
+        <div>
+          <h3>设备列表</h3>
         </div>
-      </template>
+        <div class="panel-actions">
+          <el-button plain :loading="loading" @click="loadDevices">刷新列表</el-button>
+          <el-button type="primary" @click="openCreateDialog">新建设备</el-button>
+        </div>
+      </div>
 
-      <el-table :data="devices" v-loading="loading" stripe empty-text="暂无设备数据">
+      <el-alert
+        v-if="pageErrorMessage"
+        class="panel-alert"
+        type="error"
+        :closable="false"
+        :title="pageErrorMessage"
+        show-icon
+      />
+
+      <el-alert
+        v-if="!userOptions.length"
+        class="panel-alert"
+        type="warning"
+        :closable="false"
+        title="当前还没有可绑定的用户。请先在“用户管理”里创建用户后，再新增设备。"
+        show-icon
+      />
+
+      <el-table :data="devices" v-loading="loading" stripe class="data-table" empty-text="暂无设备数据">
         <el-table-column prop="id" label="ID" width="72" />
         <el-table-column prop="device_code" label="设备编号" min-width="180" />
         <el-table-column prop="device_name" label="设备名称" min-width="180" />
@@ -282,17 +269,14 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="在线状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="row.is_online ? 'success' : 'info'" effect="light">
+            <el-tag :type="row.is_online ? 'success' : 'info'">
               {{ row.is_online ? "在线" : "离线" }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="设备状态" width="120">
           <template #default="{ row }">
-            <el-tag
-              :type="row.status === 'online' ? 'success' : row.status === 'busy' ? 'warning' : 'info'"
-              effect="plain"
-            >
+            <el-tag :type="row.status === 'online' ? 'success' : row.status === 'busy' ? 'warning' : 'info'">
               {{ row.status }}
             </el-tag>
           </template>
@@ -338,13 +322,13 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </section>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px" destroy-on-close>
       <div class="dialog-body">
         <el-alert
           v-if="dialogErrorMessage"
-          class="page-alert"
+          class="panel-alert"
           type="error"
           :closable="false"
           :title="dialogErrorMessage"
@@ -384,13 +368,13 @@ onMounted(async () => {
               <el-input v-model="form.serial_number" placeholder="可选" />
             </el-form-item>
             <el-form-item label="本地 IP">
-              <el-input v-model="form.local_ip" placeholder="如：192.168.31.10" />
+              <el-input v-model="form.local_ip" placeholder="如：192.168.1.100" />
             </el-form-item>
           </div>
 
           <div class="form-grid">
             <el-form-item label="控制地址">
-              <el-input v-model="form.control_base_url" placeholder="如：http://192.168.31.10:8001" />
+              <el-input v-model="form.control_base_url" placeholder="如：http://192.168.1.100:8001" />
             </el-form-item>
             <el-form-item label="固件版本">
               <el-input v-model="form.firmware_version" placeholder="如：0.1.0" />
@@ -418,96 +402,77 @@ onMounted(async () => {
         <el-button type="primary" :loading="saving" @click="submitDevice">保存</el-button>
       </template>
     </el-dialog>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.page-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.page-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #2f7f68;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 24px;
-  color: #1f241f;
-}
-
-.page-description {
-  margin: 10px 0 0;
-  max-width: 760px;
-  color: #617065;
-  line-height: 1.7;
-}
-
-.page-alert {
-  border-radius: 18px;
-  margin-bottom: 16px;
+.page-grid {
+  display: grid;
+  gap: 18px;
 }
 
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 
 .summary-card {
-  padding: 18px 20px;
-  border-radius: 20px;
-  background: #f5efe3;
-  border: 1px solid rgba(54, 79, 67, 0.08);
-  box-shadow: 0 10px 30px rgba(102, 84, 46, 0.08);
+  padding: 20px 22px;
 }
 
-.summary-label {
+.summary-card span {
   display: block;
-  margin-bottom: 10px;
+  color: var(--ca-muted);
   font-size: 13px;
-  color: #6c7169;
 }
 
 .summary-card strong {
-  font-size: 28px;
-  color: #1f3328;
+  display: block;
+  margin-top: 10px;
+  font-size: 32px;
+  color: var(--ca-green-900);
 }
 
-.table-card {
-  border-radius: 26px;
-  border: 1px solid rgba(54, 79, 67, 0.08);
+.summary-card--accent strong {
+  color: var(--ca-sand-700);
 }
 
-.card-header h2 {
+.panel-card {
+  padding: 22px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.panel-head h3 {
   margin: 0;
-  font-size: 18px;
-  color: #223329;
+  font-size: 26px;
 }
 
-.card-header p {
-  margin: 8px 0 0;
-  color: #66766b;
+.panel-head p {
+  margin: 10px 0 0;
+  color: var(--ca-muted);
+  line-height: 1.7;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.panel-alert {
+  margin-bottom: 16px;
+}
+
+.data-table :deep(.el-table__cell) {
+  padding: 14px 0;
 }
 
 .mono-text {
@@ -532,5 +497,13 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .panel-head,
+  .form-grid {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
 }
 </style>

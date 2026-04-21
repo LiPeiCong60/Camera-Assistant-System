@@ -28,11 +28,6 @@ const form = reactive({
 
 const dialogTitle = computed(() => (editingUserId.value ? "编辑用户" : "新建用户"));
 const availablePlans = computed(() => plans.value);
-const summary = computed(() => ({
-  total: users.value.length,
-  admins: users.value.filter((item) => item.role === "admin").length,
-  active: users.value.filter((item) => item.status === "active").length,
-}));
 
 function resetForm() {
   editingUserId.value = null;
@@ -155,7 +150,7 @@ async function submitUser() {
 async function confirmDelete(user) {
   try {
     await ElMessageBox.confirm(
-      `确定删除用户“${user.display_name}”吗？如果该用户已有拍摄、任务或设备数据，系统会按现有保护规则进行拦截。`,
+      `确定删除用户“${user.display_name}”吗？如果该用户已有拍摄、任务或设备数据，系统会按现有保护规则拦截。`,
       "删除用户",
       {
         type: "warning",
@@ -187,31 +182,9 @@ onMounted(() => {
 
 <template>
   <div class="page-grid">
-    <section class="summary-grid">
-      <article class="glass-card summary-card">
-        <span>用户总数</span>
-        <strong>{{ summary.total }}</strong>
-      </article>
-      <article class="glass-card summary-card summary-card--accent">
-        <span>管理员</span>
-        <strong>{{ summary.admins }}</strong>
-      </article>
-      <article class="glass-card summary-card">
-        <span>活跃用户</span>
-        <strong>{{ summary.active }}</strong>
-      </article>
-    </section>
-
     <section class="glass-card panel-card">
       <div class="panel-head">
-        <div>
-          <span class="panel-kicker">M8 收口</span>
-          <h3>用户管理</h3>
-          <p>
-            当前已补齐用户新增、编辑和删除入口，并接入当前套餐查看与修改。正式用户仍保留业务数据保护；
-            测试用户支持按现有规则删除，便于联调收尾清理。
-          </p>
-        </div>
+        <h3>用户管理</h3>
         <div class="panel-actions">
           <el-button plain :loading="loading" @click="loadPageData">刷新列表</el-button>
           <el-button type="primary" @click="openCreateDialog">新建用户</el-button>
@@ -357,7 +330,7 @@ onMounted(() => {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="说明">
+            <el-form-item label="套餐说明">
               <div class="plan-hint">
                 保存后会更新该用户的当前订阅，用于运行时套餐能力和 AI Provider 选型。
               </div>
@@ -377,67 +350,26 @@ onMounted(() => {
 <style scoped>
 .page-grid {
   display: grid;
-  gap: 18px;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 18px;
-}
-
-.summary-card {
-  padding: 20px 22px;
-}
-
-.summary-card span {
-  display: block;
-  color: var(--ca-muted);
-  font-size: 13px;
-}
-
-.summary-card strong {
-  display: block;
-  margin-top: 10px;
-  font-size: 32px;
-  color: var(--ca-green-900);
-}
-
-.summary-card--accent strong {
-  color: var(--ca-sand-700);
+  gap: 16px;
 }
 
 .panel-card {
-  padding: 22px;
+  padding: 24px;
 }
 
 .panel-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
-  margin-bottom: 18px;
-}
-
-.panel-kicker {
-  display: inline-block;
-  margin-bottom: 8px;
-  color: #2f7f68;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin-bottom: 20px;
 }
 
 .panel-head h3 {
   margin: 0;
-  font-size: 26px;
-}
-
-.panel-head p {
-  margin: 10px 0 0;
-  color: var(--ca-muted);
-  line-height: 1.7;
+  font-size: 30px;
+  line-height: 1.05;
+  font-weight: 700;
 }
 
 .panel-actions {
@@ -446,12 +378,18 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.panel-actions :deep(.el-button) {
+  min-height: 42px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+
 .panel-alert {
   margin-bottom: 16px;
 }
 
 .data-table :deep(.el-table__cell) {
-  padding: 14px 0;
+  padding: 15px 0;
 }
 
 .action-links {
@@ -489,5 +427,16 @@ onMounted(() => {
   background: rgba(47, 127, 104, 0.08);
   color: var(--ca-muted);
   line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .panel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

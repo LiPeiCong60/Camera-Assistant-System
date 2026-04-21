@@ -198,6 +198,40 @@ class _HistoryPageState extends State<HistoryPage>
     return candidates.first;
   }
 
+  Widget _buildSummaryCard(BuildContext context) {
+    final selectedCount = _captures.where((capture) => capture.isAiSelected).length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: _HistoryMetric(
+                  label: '拍摄会话',
+                  value: '${_sessions.length}',
+                ),
+              ),
+              Expanded(
+                child: _HistoryMetric(
+                  label: '抓拍记录',
+                  value: '${_captures.length}',
+                ),
+              ),
+              Expanded(
+                child: _HistoryMetric(
+                  label: 'AI 已选',
+                  value: '$selectedCount',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -264,6 +298,7 @@ class _HistoryPageState extends State<HistoryPage>
                 ),
               ),
             ),
+          if (!_isLoading) _buildSummaryCard(context),
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -273,7 +308,7 @@ class _HistoryPageState extends State<HistoryPage>
                   child: _sessions.isEmpty && !_isLoading
                       ? const _HistoryEmptyBlock(
                           title: '暂无历史会话',
-                          subtitle: '后续每次创建拍摄会话后，这里都会沉淀记录。',
+                          subtitle: '每次开始正式拍摄后，这里都会沉淀对应的会话记录。',
                         )
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -290,7 +325,7 @@ class _HistoryPageState extends State<HistoryPage>
                   child: _captures.isEmpty && !_isLoading
                       ? const _HistoryEmptyBlock(
                           title: '暂无历史抓拍',
-                          subtitle: '完成拍照上传后，这里会显示抓拍记录和 AI 选择状态。',
+                          subtitle: '完成拍照上传后，这里会显示抓拍记录和 AI 选优结果。',
                         )
                       : ListView(
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -312,7 +347,7 @@ class _HistoryPageState extends State<HistoryPage>
                                     ),
                                     const SizedBox(height: 10),
                                     Text(
-                                      '基于最近一组同会话抓拍发起最小可用的 AI 选优，并把最佳图片标记为已选中。',
+                                      '对最近一组同会话抓拍执行 AI 选优，并把最佳图片标记为已选中。',
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodyMedium
@@ -334,7 +369,7 @@ class _HistoryPageState extends State<HistoryPage>
                                           : const Icon(
                                               Icons.auto_awesome_outlined,
                                             ),
-                                      label: const Text('AI 选优最近一组抓拍'),
+                                      label: const Text('对最近一组执行 AI 选优'),
                                     ),
                                   ],
                                 ),
@@ -401,12 +436,16 @@ class _HistorySessionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text('模式：${session.mode}'),
+              Text('模式：${_modeLabel(session.mode)}'),
               const SizedBox(height: 6),
               Text('开始时间：${formatter.format(session.startedAt.toLocal())}'),
+              if (session.endedAt != null) ...<Widget>[
+                const SizedBox(height: 6),
+                Text('结束时间：${formatter.format(session.endedAt!.toLocal())}'),
+              ],
               const SizedBox(height: 6),
               Text(
-                '模板：${session.templateId == null ? '未绑定' : '#${session.templateId}'}',
+                '模板：${session.templateId == null ? '未绑定模板' : '模板 #${session.templateId}'}',
               ),
               if (metadataPlatform != null) ...<Widget>[
                 const SizedBox(height: 6),
@@ -417,6 +456,17 @@ class _HistorySessionCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _modeLabel(String raw) {
+    switch (raw) {
+      case 'device_link':
+        return '设备联动';
+      case 'mobile_only':
+        return '手机拍摄';
+      default:
+        return raw;
+    }
   }
 }
 
@@ -444,21 +494,19 @@ class _HistoryCaptureCard extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      'Capture #${capture.id}',
+                      '抓拍 #${capture.id}',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                  if (capture.isAiSelected) const _StatusBadge(label: 'AI已选中'),
+                  if (capture.isAiSelected) const _StatusBadge(label: 'AI 已选'),
                 ],
               ),
               const SizedBox(height: 12),
-              Text('会话：#${capture.sessionId} / 类型：${capture.captureType}'),
+              Text('所属会话：#${capture.sessionId} · ${_captureTypeLabel(capture.captureType)}'),
               const SizedBox(height: 6),
-              Text('存储：${capture.storageProvider}'),
-              const SizedBox(height: 6),
-              Text('文件：${capture.fileUrl}'),
+              Text('来源：${_storageLabel(capture.storageProvider)}'),
               if (capture.width != null && capture.height != null) ...<Widget>[
                 const SizedBox(height: 6),
                 Text('尺寸：${capture.width} x ${capture.height}'),
@@ -469,11 +517,62 @@ class _HistoryCaptureCard extends StatelessWidget {
               ],
               const SizedBox(height: 6),
               Text('时间：${formatter.format(capture.createdAt.toLocal())}'),
+              const SizedBox(height: 8),
+              Theme(
+                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  title: const Text('查看详细信息'),
+                  children: <Widget>[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text('存储标识：${capture.storageProvider}'),
+                            const SizedBox(height: 6),
+                            Text('文件地址：${capture.fileUrl}'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  String _captureTypeLabel(String raw) {
+    switch (raw) {
+      case 'single':
+      case 'photo':
+        return '单张拍摄';
+      case 'burst':
+        return '连拍';
+      case 'best':
+        return '最佳图';
+      case 'background':
+        return '背景分析图';
+      default:
+        return raw;
+    }
+  }
+
+  String _storageLabel(String raw) {
+    switch (raw) {
+      case 'local':
+      case 'local_static':
+        return '后端存储';
+      default:
+        return raw;
+    }
   }
 }
 
@@ -580,6 +679,35 @@ class _StatusBadge extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HistoryMetric extends StatelessWidget {
+  const _HistoryMetric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        Text(
+          value,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF17313A),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: const Color(0xFF5A6B70)),
+        ),
+      ],
     );
   }
 }

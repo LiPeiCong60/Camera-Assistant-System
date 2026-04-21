@@ -9,7 +9,7 @@ void main() {
     await tester.pumpWidget(const CameraAssistantApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Camera Assistant'), findsAtLeastNWidgets(1));
+    expect(find.text('Camera\nAssistant'), findsOneWidget);
     expect(find.text('登录'), findsOneWidget);
   });
 }

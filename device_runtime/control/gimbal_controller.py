@@ -48,62 +48,6 @@ class MockServoDriver(ServoDriver):
         return
 
 
-class RaspberryPiPWMDriver(ServoDriver):
-    """
-    Raspberry Pi PWM driver using PCA9685 via adafruit_servokit.
-    """
-
-    def __init__(self, pca9685_address: int = 0x40, channels: int = 16) -> None:
-        try:
-            from adafruit_servokit import ServoKit
-        except ImportError as exc:
-            raise RuntimeError(
-                "Missing dependency adafruit-circuitpython-servokit. "
-                "Install it on Raspberry Pi first."
-            ) from exc
-        self._logger = logging.getLogger(self.__class__.__name__)
-        self._kit = ServoKit(channels=channels, address=pca9685_address)
-        self._channels = channels
-        self._angles: dict[str, float] = {"pan": 0.0, "tilt": 0.0}
-
-    def write_angle(self, axis: str, angle_deg: float, axis_cfg: ServoAxisConfig) -> None:
-        channel = axis_cfg.servo_id
-        if channel < 0 or channel >= self._channels:
-            raise ValueError(
-                f"Invalid servo_id={channel} for axis={axis}. "
-                f"Expected [0, {self._channels - 1}]."
-            )
-
-        servo_angle = self._to_servo_space(angle_deg, axis_cfg)
-        self._kit.servo[channel].angle = servo_angle
-        self._angles[axis] = angle_deg
-        self._logger.debug(
-            "[HW] axis=%s servo_id=%s angle=%.2f servo_angle=%.2f",
-            axis,
-            channel,
-            angle_deg,
-            servo_angle,
-        )
-
-    def read_angle(self, axis: str, axis_cfg: ServoAxisConfig) -> float | None:
-        # No position feedback channel yet; return the latest commanded angle.
-        return self._angles.get(axis)
-
-    def close(self) -> None:
-        return
-
-    @staticmethod
-    def _to_servo_space(angle_deg: float, axis_cfg: ServoAxisConfig) -> float:
-        span = axis_cfg.max_angle - axis_cfg.min_angle
-        if span <= 0:
-            raise ValueError(
-                f"Invalid axis range: min={axis_cfg.min_angle}, max={axis_cfg.max_angle}"
-            )
-        clamped = min(axis_cfg.max_angle, max(axis_cfg.min_angle, angle_deg))
-        normalized = (clamped - axis_cfg.min_angle) / span
-        return normalized * 180.0
-
-
 class TTLBusSerialDriver(ServoDriver):
     """
     TTL bus-servo driver over serial port.

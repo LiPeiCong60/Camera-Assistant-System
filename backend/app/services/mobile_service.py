@@ -30,6 +30,7 @@ from backend.app.schemas.capture import CaptureCreateRequest
 from backend.app.schemas.capture_session import CaptureSessionCreateRequest
 from backend.app.schemas.template import TemplateCreateRequest
 from backend.app.services.ai_provider_service import AiProviderInvocationError, AiProviderService
+from backend.app.services.template_pose_service import TemplatePoseService
 
 
 def _utcnow() -> datetime:
@@ -78,6 +79,18 @@ class MobileService:
         return self.template_repo.list_available_for_user(user.id)
 
     def create_template(self, user: User, payload: TemplateCreateRequest) -> Template:
+        template_data = payload.template_data
+        if not template_data:
+            if not payload.source_image_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="template_data or source_image_url is required",
+                )
+            template_data = TemplatePoseService().create_template_data(
+                name=payload.name,
+                source_image_url=payload.source_image_url,
+            )
+
         template = Template(
             id=_next_id(self.session, Template),
             user_id=user.id,
@@ -85,7 +98,7 @@ class MobileService:
             template_type=payload.template_type,
             source_image_url=payload.source_image_url,
             preview_image_url=payload.preview_image_url,
-            template_data=payload.template_data,
+            template_data=template_data,
             status="active",
         )
         self.template_repo.add(template)

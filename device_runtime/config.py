@@ -33,11 +33,23 @@ class ServoAxisConfig:
     max_step_deg: float = 3.0
 
 
+ServoDriverKind = Literal["mock", "ttl_bus"]
+
+
+@dataclass(slots=True)
+class TTLBusServoConfig:
+    port: str = "/dev/ttyUSB0"
+    baudrate: int = 115200
+    move_time_ms: int = 120
+    timeout_s: float = 0.2
+
+
 @dataclass(slots=True)
 class GimbalConfig:
     pan: ServoAxisConfig
     tilt: ServoAxisConfig
-    use_mock: bool = True
+    driver_kind: ServoDriverKind = "ttl_bus"
+    ttl_bus: TTLBusServoConfig = field(default_factory=TTLBusServoConfig)
     smooth_sleep_s: float = 0.01
     feedback_poll_interval_s: float = 0.05
 

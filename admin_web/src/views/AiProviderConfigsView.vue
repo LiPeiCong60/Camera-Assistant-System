@@ -193,11 +193,7 @@ function normalizeBaseUrl(value) {
     <section class="glass-card panel-card">
       <div class="panel-head">
         <div>
-          <span class="panel-kicker">多厂商 / 多模型 / 多 Key</span>
           <h3>AI Provider 配置</h3>
-          <p>
-            每一条记录代表一套独立的 AI 配置。你可以为不同厂商、不同模型、不同密钥维护多条记录，并设置默认启用项。
-          </p>
         </div>
         <div class="panel-actions">
           <el-button plain @click="loadConfigs" :loading="loading">刷新列表</el-button>
@@ -253,7 +249,7 @@ function normalizeBaseUrl(value) {
       </el-table>
     </section>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px" top="4vh" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="760px" destroy-on-close>
       <div class="dialog-body">
         <el-alert
           v-if="dialogErrorMessage"
@@ -265,58 +261,58 @@ function normalizeBaseUrl(value) {
         />
 
         <el-form label-position="top">
-        <div class="form-grid">
-          <el-form-item label="配置编码">
-            <el-input v-model="form.provider_code" placeholder="如：longcat_omni_primary" />
-          </el-form-item>
-          <el-form-item label="显示名称">
-            <el-input v-model="form.display_name" placeholder="如：LongCat Omni 主配置" />
-          </el-form-item>
-        </div>
-
-        <div class="form-grid form-grid--three">
-          <el-form-item label="厂商">
-            <el-select v-model="form.vendor_name">
-              <el-option v-for="item in vendorOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="兼容格式">
-            <el-select v-model="form.provider_format">
-              <el-option v-for="item in formatOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="模型名">
-            <el-input v-model="form.model_name" placeholder="如：LongCat-Flash-Omni-2603" />
-          </el-form-item>
-        </div>
-
-        <el-form-item label="Base URL">
-          <el-input v-model="form.api_base_url" placeholder="如：https://api.longcat.chat/openai" />
-          <div class="field-hint">
-            填 Base URL，不要填完整的 `/v1/chat/completions`。如果误填，保存时会自动规范化。
+          <div class="form-grid">
+            <el-form-item label="配置编码">
+              <el-input v-model="form.provider_code" placeholder="如：longcat_omni_primary" />
+            </el-form-item>
+            <el-form-item label="显示名称">
+              <el-input v-model="form.display_name" placeholder="如：LongCat Omni 主配置" />
+            </el-form-item>
           </div>
-        </el-form-item>
 
-        <el-form-item :label="editingConfigId ? 'API Key（留空表示保持不变）' : 'API Key'">
-          <el-input v-model="form.api_key" type="password" show-password placeholder="请输入 API Key" />
-        </el-form-item>
+          <div class="form-grid form-grid--three">
+            <el-form-item label="厂商">
+              <el-select v-model="form.vendor_name">
+                <el-option v-for="item in vendorOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="兼容格式">
+              <el-select v-model="form.provider_format">
+                <el-option v-for="item in formatOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="模型名">
+              <el-input v-model="form.model_name" placeholder="如：LongCat-Flash-Omni-2603" />
+            </el-form-item>
+          </div>
 
-        <div class="form-grid">
-          <el-form-item label="默认配置">
-            <el-switch v-model="form.is_default" />
+          <el-form-item label="Base URL">
+            <el-input v-model="form.api_base_url" placeholder="如：https://api.longcat.chat/openai" />
+            <div class="field-hint">
+              填 Base URL，不要填完整的 `/v1/chat/completions`。如果误填，保存时会自动规范化。
+            </div>
           </el-form-item>
-          <el-form-item label="启用状态">
-            <el-switch v-model="form.enabled" />
+
+          <el-form-item :label="editingConfigId ? 'API Key（留空表示保持不变）' : 'API Key'">
+            <el-input v-model="form.api_key" type="password" show-password placeholder="请输入 API Key" />
           </el-form-item>
-        </div>
 
-        <el-form-item label="备注">
-          <el-input v-model="form.notes" type="textarea" :rows="3" placeholder="可记录用途、环境、密钥来源等说明" />
-        </el-form-item>
+          <div class="form-grid">
+            <el-form-item label="默认配置">
+              <el-switch v-model="form.is_default" />
+            </el-form-item>
+            <el-form-item label="启用状态">
+              <el-switch v-model="form.enabled" />
+            </el-form-item>
+          </div>
 
-        <el-form-item label="Extra Config (JSON)">
-          <el-input v-model="form.extra_config_text" type="textarea" :rows="6" />
-        </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="form.notes" type="textarea" :rows="3" placeholder="可记录用途、环境、密钥来源等说明" />
+          </el-form-item>
+
+          <el-form-item label="Extra Config (JSON)">
+            <el-input v-model="form.extra_config_text" type="textarea" :rows="6" />
+          </el-form-item>
         </el-form>
       </div>
 
@@ -336,27 +332,29 @@ function normalizeBaseUrl(value) {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 18px;
 }
 
 .summary-card {
-  padding: 18px 20px;
-  display: grid;
-  gap: 8px;
+  padding: 20px 22px;
 }
 
 .summary-card span {
+  display: block;
   color: var(--ca-muted);
   font-size: 13px;
 }
 
 .summary-card strong {
+  display: block;
+  margin-top: 10px;
   font-size: 32px;
+  color: var(--ca-green-900);
 }
 
-.summary-card--accent {
-  background: linear-gradient(180deg, rgba(217, 140, 59, 0.13), rgba(255, 255, 255, 0.92));
+.summary-card--accent strong {
+  color: var(--ca-sand-700);
 }
 
 .panel-card {
@@ -366,26 +364,18 @@ function normalizeBaseUrl(value) {
 .panel-head {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
   align-items: flex-start;
+  gap: 16px;
   margin-bottom: 18px;
 }
 
-.panel-kicker {
-  color: var(--ca-primary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .panel-head h3 {
-  margin: 8px 0;
-  font-size: 28px;
+  margin: 0;
+  font-size: 26px;
 }
 
 .panel-head p {
-  margin: 0;
+  margin: 10px 0 0;
   color: var(--ca-muted);
   line-height: 1.7;
 }
@@ -406,8 +396,8 @@ function normalizeBaseUrl(value) {
   padding-right: 6px;
 }
 
-.data-table {
-  width: 100%;
+.data-table :deep(.el-table__cell) {
+  padding: 14px 0;
 }
 
 .form-grid {
@@ -428,15 +418,13 @@ function normalizeBaseUrl(value) {
 }
 
 @media (max-width: 960px) {
-  .summary-grid {
-    grid-template-columns: 1fr;
+  .panel-head {
+    flex-direction: column;
   }
 
-  .panel-head,
   .form-grid,
   .form-grid--three {
     grid-template-columns: 1fr;
-    flex-direction: column;
   }
 }
 </style>

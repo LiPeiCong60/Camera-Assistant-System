@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -9,8 +12,13 @@ from typing import Any
 
 import cv2
 
-from device_runtime.config import default_config
-from device_runtime.control.gimbal_controller import GimbalController, MockServoDriver
+from device_runtime.config import GimbalConfig, default_config
+from device_runtime.control.gimbal_controller import (
+    GimbalController,
+    MockServoDriver,
+    ServoDriver,
+    TTLBusSerialDriver,
+)
 from device_runtime.control.tracking_controller import TrackingController
 from device_runtime.interfaces.capture_trigger import LocalFileCaptureTrigger
 from device_runtime.interfaces.target_strategy import TargetPreset, build_target_strategy
@@ -34,6 +42,76 @@ class SessionOpenPayload:
     start_mode: str = "MANUAL"
 
 
+def _env_text(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _env_text(name)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _env_float(name: str, default: float) -> float:
+    value = _env_text(name)
+    if value is None:
+        return default
+    return float(value)
+
+
+def _resolve_driver_kind() -> str:
+    configured = _env_text("DEVICE_SERVO_DRIVER")
+    if configured is not None:
+        return configured.lower()
+    return "mock" if sys.platform.startswith("win") else "ttl_bus"
+
+
+def _apply_gimbal_env_overrides(config: GimbalConfig) -> None:
+    config.driver_kind = _resolve_driver_kind()
+    config.ttl_bus.port = _env_text("DEVICE_TTL_SERIAL_PORT") or config.ttl_bus.port
+    config.ttl_bus.baudrate = _env_int("DEVICE_TTL_BAUDRATE", config.ttl_bus.baudrate)
+    config.ttl_bus.move_time_ms = _env_int(
+        "DEVICE_TTL_MOVE_TIME_MS",
+        config.ttl_bus.move_time_ms,
+    )
+    config.ttl_bus.timeout_s = _env_float(
+        "DEVICE_TTL_TIMEOUT_S",
+        config.ttl_bus.timeout_s,
+    )
+
+    config.pan.servo_id = _env_int("DEVICE_PAN_SERVO_ID", config.pan.servo_id)
+    config.tilt.servo_id = _env_int("DEVICE_TILT_SERVO_ID", config.tilt.servo_id)
+    config.pan.min_angle = _env_float("DEVICE_PAN_MIN_ANGLE", config.pan.min_angle)
+    config.pan.max_angle = _env_float("DEVICE_PAN_MAX_ANGLE", config.pan.max_angle)
+    config.pan.home_angle = _env_float("DEVICE_PAN_HOME_ANGLE", config.pan.home_angle)
+    config.pan.max_step_deg = _env_float("DEVICE_PAN_MAX_STEP_DEG", config.pan.max_step_deg)
+    config.tilt.min_angle = _env_float("DEVICE_TILT_MIN_ANGLE", config.tilt.min_angle)
+    config.tilt.max_angle = _env_float("DEVICE_TILT_MAX_ANGLE", config.tilt.max_angle)
+    config.tilt.home_angle = _env_float("DEVICE_TILT_HOME_ANGLE", config.tilt.home_angle)
+    config.tilt.max_step_deg = _env_float("DEVICE_TILT_MAX_STEP_DEG", config.tilt.max_step_deg)
+
+
+def _build_servo_driver(config: GimbalConfig) -> ServoDriver:
+    driver_kind = config.driver_kind.lower()
+    if driver_kind == "mock":
+        return MockServoDriver()
+    if driver_kind == "ttl_bus":
+        return TTLBusSerialDriver(
+            port=config.ttl_bus.port,
+            baudrate=config.ttl_bus.baudrate,
+            move_time_ms=config.ttl_bus.move_time_ms,
+            timeout_s=config.ttl_bus.timeout_s,
+        )
+    raise RuntimeError(
+        "Unsupported DEVICE_SERVO_DRIVER. Expected `mock` or `ttl_bus`."
+    )
+
+
 class DeviceSessionContext:
     """Realtime device session context used by local API endpoints."""
 
@@ -45,25 +123,34 @@ class DeviceSessionContext:
         template_repository: LocalTemplateRepository | None = None,
         initial_selected_template_id: str | None = None,
     ) -> None:
+        self._logger = logging.getLogger(self.__class__.__name__)
         self.session_code = payload.session_code
         self.stream_url = payload.stream_url
         self.mirror_view = bool(payload.mirror_view)
         self.opened_at = time.time()
 
         self.config = default_config(payload.stream_url)
+        _apply_gimbal_env_overrides(self.config.gimbal)
         self.runtime_state = RuntimeState()
         self.mode_manager = ModeManager(initial_mode=ControlMode(payload.start_mode))
         self.tracking = TrackingController(
             self.config.tracking,
             build_target_strategy(TargetPreset.CENTER),
         )
-        self.gimbal = GimbalController(self.config.gimbal, MockServoDriver())
+        self.gimbal = GimbalController(self.config.gimbal, _build_servo_driver(self.config.gimbal))
         self.control_service = ControlService(
             mode_manager=self.mode_manager,
             tracking=self.tracking,
             gimbal=self.gimbal,
             runtime_state=self.runtime_state,
             manual_step_deg=self.config.app.manual_step_deg,
+        )
+        self._logger.info(
+            "device_runtime servo driver=%s pan_servo_id=%s tilt_servo_id=%s ttl_port=%s",
+            self.config.gimbal.driver_kind,
+            self.config.gimbal.pan.servo_id,
+            self.config.gimbal.tilt.servo_id,
+            self.config.gimbal.ttl_bus.port if self.config.gimbal.driver_kind == "ttl_bus" else "n/a",
         )
         self.template_library = template_library or TemplateLibrary()
         self.template_repository = template_repository or LocalTemplateRepository(

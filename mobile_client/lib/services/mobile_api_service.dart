@@ -230,6 +230,23 @@ class MobileApiService {
     return template;
   }
 
+  Future<TemplateSummary> createTemplateFromPhoto({
+    required String accessToken,
+    required String name,
+    required String filePath,
+  }) async {
+    final uploadResult = await uploadCaptureFile(
+      accessToken: accessToken,
+      filePath: filePath,
+    );
+    return createTemplate(
+      accessToken: accessToken,
+      name: name,
+      sourceImageUrl: uploadResult.fileUrl,
+      previewImageUrl: uploadResult.fileUrl,
+    );
+  }
+
   Future<TemplateSummary> deleteTemplate({
     required String accessToken,
     required int templateId,

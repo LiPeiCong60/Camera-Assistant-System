@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../services/app_config.dart';
 import 'auth_controller.dart';
 import 'register_page.dart';
 
@@ -85,20 +84,31 @@ class _LoginPageState extends State<LoginPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: <Widget>[
                               Text(
-                                'Camera Assistant',
-                                style: Theme.of(context).textTheme.displaySmall
+                                'USER LOGIN',
+                                style: Theme.of(context).textTheme.labelLarge
                                     ?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                      color: const Color(0xFF17313A),
+                                      color: const Color(0xFF32535F),
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 3.2,
                                     ),
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                '登录后可进入拍摄、历史记录和设备联动页面，套餐与 AI 能力会随账号自动同步。',
-                                style: Theme.of(context).textTheme.bodyLarge
+                                'Camera\nAssistant',
+                                style: Theme.of(context).textTheme.displayLarge
                                     ?.copyWith(
-                                      color: const Color(0xFF32535F),
-                                      height: 1.5,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF17313A),
+                                      height: 0.92,
+                                    ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '用户端登录',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(
+                                      color: const Color(0xFF17313A),
+                                      fontWeight: FontWeight.w700,
                                     ),
                               ),
                               const SizedBox(height: 28),
@@ -197,23 +207,6 @@ class _LoginPageState extends State<LoginPage> {
                                             ),
                                             child: const Text('没有账号？去注册'),
                                           ),
-                                        ),
-                                        const SizedBox(height: 14),
-                                        Text(
-                                          '当前连接：${AppConfig.apiBaseUrl}',
-                                          style: Theme.of(context).textTheme.bodySmall
-                                              ?.copyWith(
-                                                color: const Color(0xFF5A6B70),
-                                              ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          '如需切换环境，可通过启动参数调整 API 地址。',
-                                          style: Theme.of(context).textTheme.bodySmall
-                                              ?.copyWith(
-                                                color: const Color(0xFF7A888C),
-                                                height: 1.4,
-                                              ),
                                         ),
                                       ],
                                     ),
