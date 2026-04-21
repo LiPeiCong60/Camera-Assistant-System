@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light;
+  --ca-bg: #f3efe5;
+  --ca-surface: rgba(255, 252, 246, 0.92);
+  --ca-surface-strong: #ffffff;
+  --ca-ink: #1f2a24;
+  --ca-muted: #627067;
+  --ca-primary: #1e6f5c;
+  --ca-primary-soft: #d9eee7;
+  --ca-accent: #d98c3b;
+  --ca-border: rgba(31, 42, 36, 0.1);
+  --ca-shadow: 0 18px 40px rgba(39, 54, 46, 0.08);
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--ca-ink);
+  background:
+    radial-gradient(circle at top left, rgba(217, 140, 59, 0.12), transparent 32%),
+    radial-gradient(circle at right center, rgba(30, 111, 92, 0.14), transparent 28%),
+    linear-gradient(180deg, #f6f1e8 0%, #efe8dc 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.glass-card {
+  background: var(--ca-surface);
+  border: 1px solid var(--ca-border);
+  border-radius: 24px;
+  box-shadow: var(--ca-shadow);
+  backdrop-filter: blur(14px);
+}

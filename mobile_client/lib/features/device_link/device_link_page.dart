@@ -1,0 +1,2218 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../models/ai_task_summary.dart';
+import '../../models/capture_record.dart';
+import '../../models/device_health_summary.dart';
+import '../../models/device_link_result.dart';
+import '../../models/device_status_summary.dart';
+import '../../models/template_summary.dart';
+import '../../services/api_client.dart';
+import '../../services/app_config.dart';
+import '../../services/device_api_service.dart';
+import '../../services/mobile_api_service.dart';
+import '../template/template_preset_dialog.dart';
+
+class DeviceLinkPage extends StatefulWidget {
+  const DeviceLinkPage({
+    super.key,
+    required this.mobileApiService,
+    required this.accessToken,
+    this.initialTemplate,
+    this.initialSessionCode,
+    this.entryLabel,
+  });
+
+  final MobileApiService mobileApiService;
+  final String accessToken;
+  final TemplateSummary? initialTemplate;
+  final String? initialSessionCode;
+  final String? entryLabel;
+
+  @override
+  State<DeviceLinkPage> createState() => _DeviceLinkPageState();
+}
+
+class _DeviceLinkPageState extends State<DeviceLinkPage> {
+  static const String _prefsBaseUrlKey = 'device_link.base_url';
+  static const String _prefsStreamUrlKey = 'device_link.stream_url';
+  static const String _prefsAutoRefreshKey = 'device_link.auto_refresh';
+  static const String _prefsRecentConnectionsKey =
+      'device_link.recent_connections';
+  static const List<String> _modes = <String>[
+    'MANUAL',
+    'AUTO_TRACK',
+    'SMART_COMPOSE',
+  ];
+  static const List<String> _followModes = <String>['shoulders', 'face'];
+
+  final DeviceApiService _deviceApiService = const DeviceApiService();
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _streamUrlController;
+  late final TextEditingController _sessionCodeController;
+
+  List<TemplateSummary> _templates = const <TemplateSummary>[];
+  TemplateSummary? _selectedTemplate;
+  DeviceHealthSummary? _health;
+  DeviceStatusSummary? _status;
+
+  bool _isBusy = false;
+  bool _isLoadingTemplates = false;
+  bool _isCreatingDemoTemplate = false;
+  bool _isDeletingTemplate = false;
+  bool _autoRefreshEnabled = true;
+  String? _errorMessage;
+  String? _syncMessage;
+  String? _lastCapturePath;
+  AiTaskSummary? _lastBackendAiTask;
+  DateTime? _lastStatusUpdatedAt;
+  Timer? _pollTimer;
+  Timer? _persistTimer;
+  final List<_DeviceActionRecord> _actionRecords = <_DeviceActionRecord>[];
+  final List<_DeviceCaptureRecord> _captureRecords = <_DeviceCaptureRecord>[];
+  List<_DeviceConnectionPreset> _recentConnections =
+      const <_DeviceConnectionPreset>[];
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController = TextEditingController(
+      text: AppConfig.deviceApiBaseUrl,
+    );
+    _streamUrlController = TextEditingController(
+      text: 'rtsp://192.168.31.20/live',
+    );
+    _sessionCodeController = TextEditingController(
+      text: widget.initialSessionCode ?? _buildSessionCode(),
+    );
+    _baseUrlController.addListener(_scheduleDraftPersist);
+    _streamUrlController.addListener(_scheduleDraftPersist);
+    _loadTemplates();
+    _loadPersistedConfig();
+    _restartPolling();
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    _persistTimer?.cancel();
+    _baseUrlController.removeListener(_scheduleDraftPersist);
+    _streamUrlController.removeListener(_scheduleDraftPersist);
+    _baseUrlController.dispose();
+    _streamUrlController.dispose();
+    _sessionCodeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _runAction(
+    Future<void> Function() action, {
+    String? successMessage,
+  }) async {
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _syncMessage = null;
+    });
+
+    try {
+      await action();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _syncMessage = successMessage;
+        if (successMessage != null) {
+          _addActionRecord('system', successMessage);
+        }
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+        _addActionRecord('error', error.message);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '设备请求失败，请检查地址、网络和本地运行时服务。';
+        _addActionRecord('error', '设备请求失败，请检查地址、网络和本地运行时服务。');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadTemplates() async {
+    setState(() {
+      _isLoadingTemplates = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final templates = await widget.mobileApiService.listTemplates(
+        accessToken: widget.accessToken,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _templates = templates;
+        _selectedTemplate = _resolveInitialTemplate(templates);
+        _isLoadingTemplates = false;
+        if (widget.entryLabel != null) {
+          _syncMessage = '已从 ${widget.entryLabel} 进入设备联动页。';
+        }
+      });
+    } on ApiException catch (error) {
+      final cachedTemplates = await widget.mobileApiService
+          .getCachedTemplates();
+      if (!mounted) {
+        return;
+      }
+      if (cachedTemplates.isNotEmpty) {
+        setState(() {
+          _templates = cachedTemplates;
+          _selectedTemplate = _resolveInitialTemplate(cachedTemplates);
+          _syncMessage = '模板请求失败，已显示本地缓存模板。';
+          _isLoadingTemplates = false;
+        });
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+        _isLoadingTemplates = false;
+      });
+    } catch (_) {
+      final cachedTemplates = await widget.mobileApiService
+          .getCachedTemplates();
+      if (!mounted) {
+        return;
+      }
+      if (cachedTemplates.isNotEmpty) {
+        setState(() {
+          _templates = cachedTemplates;
+          _selectedTemplate = _resolveInitialTemplate(cachedTemplates);
+          _syncMessage = '模板接口当前不可用，已显示缓存内容。';
+          _isLoadingTemplates = false;
+        });
+        return;
+      }
+      setState(() {
+        _errorMessage = '模板加载失败。';
+        _isLoadingTemplates = false;
+      });
+    }
+  }
+
+  // ignore: unused_element
+  Future<void> _createDemoTemplate() async {
+    if (_isCreatingDemoTemplate) {
+      return;
+    }
+
+    setState(() {
+      _isCreatingDemoTemplate = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final template = await widget.mobileApiService.createTemplate(
+        accessToken: widget.accessToken,
+        name: '设备联动示例模板',
+        templateData: <String, dynamic>{
+          'bbox_norm': <double>[0.32, 0.12, 0.34, 0.70],
+          'pose_points': <String, List<double>>{
+            'head': <double>[0.49, 0.16],
+            'left_shoulder': <double>[0.43, 0.28],
+            'right_shoulder': <double>[0.55, 0.28],
+            'left_hip': <double>[0.44, 0.58],
+            'right_hip': <double>[0.54, 0.58],
+          },
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _templates = <TemplateSummary>[template, ..._templates];
+        _selectedTemplate = template;
+        _syncMessage = '已创建并选中示例模板。';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '示例模板创建失败。';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingDemoTemplate = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _createTemplate() async {
+    if (_isCreatingDemoTemplate) {
+      return;
+    }
+
+    final draft = await showTemplatePresetDialog(context, title: '新增模板');
+    if (!mounted || draft == null) {
+      return;
+    }
+
+    setState(() {
+      _isCreatingDemoTemplate = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final template = await widget.mobileApiService.createTemplate(
+        accessToken: widget.accessToken,
+        name: draft.name,
+        templateType: draft.templateType,
+        templateData: draft.templateData,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _templates = <TemplateSummary>[
+          template,
+          ..._templates.where((item) => item.id != template.id),
+        ];
+        _selectedTemplate = template;
+        _syncMessage = '已新增模板并选中：${template.name}';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '模板创建失败。';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingDemoTemplate = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteSelectedTemplate() async {
+    final template = _selectedTemplate;
+    if (template == null || _isDeletingTemplate) {
+      return;
+    }
+    if (template.isRecommendedDefault) {
+      setState(() {
+        _syncMessage = '后台推荐模板不能在手机端删除，如需调整请到管理后台维护。';
+      });
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除模板'),
+        content: Text('确认删除模板“${template.name}”吗？删除后将无法继续在设备联动页选择它。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isDeletingTemplate = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await widget.mobileApiService.deleteTemplate(
+        accessToken: widget.accessToken,
+        templateId: template.id,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final nextTemplates = _templates
+          .where((item) => item.id != template.id)
+          .toList(growable: false);
+      setState(() {
+        _templates = nextTemplates;
+        _selectedTemplate = _resolveInitialTemplate(nextTemplates);
+        _syncMessage = '已删除模板：${template.name}';
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '模板删除失败。';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingTemplate = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _checkHealth() async {
+    await _runAction(() async {
+      final health = await _deviceApiService.getHealth(
+        baseUrl: _baseUrlController.text,
+      );
+      setState(() {
+        _health = health;
+      });
+    }, successMessage: '健康检查完成。');
+  }
+
+  Future<void> _fetchStatus() async {
+    await _runAction(() async {
+      final status = await _deviceApiService.getStatus(
+        baseUrl: _baseUrlController.text,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '设备状态已刷新。');
+  }
+
+  Future<void> _openSession() async {
+    await _runAction(() async {
+      final status = await _deviceApiService.openSession(
+        baseUrl: _baseUrlController.text,
+        sessionCode: _sessionCodeController.text.trim(),
+        streamUrl: _streamUrlController.text.trim(),
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+      await _rememberCurrentConnection();
+      await _refreshStatusSilently();
+      await _refreshHealthSilently();
+    }, successMessage: '设备会话已打开。');
+  }
+
+  Future<void> _closeSession() async {
+    await _runAction(() async {
+      await _deviceApiService.closeSession(
+        baseUrl: _baseUrlController.text,
+        sessionCode: _status?.sessionCode ?? _sessionCodeController.text.trim(),
+      );
+      setState(() {
+        _status = null;
+        _lastCapturePath = null;
+        _lastBackendAiTask = null;
+        _lastStatusUpdatedAt = null;
+        _sessionCodeController.text = _buildSessionCode();
+      });
+      await _refreshHealthSilently();
+    }, successMessage: '设备会话已关闭。');
+  }
+
+  Future<void> _manualMove(String action) async {
+    await _runAction(() async {
+      final status = await _deviceApiService.manualMove(
+        baseUrl: _baseUrlController.text,
+        action: action,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '手动移动已执行。');
+  }
+
+  Future<void> _setMode(String mode) async {
+    await _runAction(() async {
+      final status = await _deviceApiService.setMode(
+        baseUrl: _baseUrlController.text,
+        mode: mode,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '模式已更新。');
+  }
+
+  Future<void> _home() async {
+    await _runAction(() async {
+      final status = await _deviceApiService.home(
+        baseUrl: _baseUrlController.text,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '云台已回中。');
+  }
+
+  Future<void> _setFollowMode(String followMode) async {
+    await _runAction(() async {
+      final status = await _deviceApiService.setFollowMode(
+        baseUrl: _baseUrlController.text,
+        followMode: followMode,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '跟随模式已更新。');
+  }
+
+  Future<void> _pushTemplate() async {
+    final template = _selectedTemplate;
+    if (template == null) {
+      setState(() {
+        _errorMessage = '请先选择一个模板。';
+      });
+      return;
+    }
+
+    await _runAction(() async {
+      final status = await _deviceApiService.selectTemplate(
+        baseUrl: _baseUrlController.text,
+        templateId: template.id,
+        templateData: template.templateData,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '模板已下发到设备。');
+  }
+
+  Future<void> _applyAngleSuggestion() async {
+    await _runAction(() async {
+      final status = await _deviceApiService.applyAngle(
+        baseUrl: _baseUrlController.text,
+        recommendedPanDelta: 4,
+        recommendedTiltDelta: -1.5,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: 'AI 角度建议已应用。');
+  }
+
+  Future<void> _applyLockSuggestion() async {
+    final targetBoxNorm = _resolveTargetBoxNorm();
+    await _runAction(() async {
+      final status = await _deviceApiService.applyLock(
+        baseUrl: _baseUrlController.text,
+        recommendedPanDelta: 2,
+        recommendedTiltDelta: -1,
+        targetBoxNorm: targetBoxNorm,
+      );
+      setState(() {
+        _status = status;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: 'AI 锁机位建议已应用。');
+  }
+
+  Future<void> _triggerCapture() async {
+    await _runAction(() async {
+      final capturePath = await _deviceApiService.triggerCapture(
+        baseUrl: _baseUrlController.text,
+      );
+      await _refreshStatusSilently();
+      setState(() {
+        _lastCapturePath = capturePath;
+        _captureRecords.insert(
+          0,
+          _DeviceCaptureRecord(
+            path: capturePath,
+            createdAt: DateTime.now(),
+            source: 'device_runtime',
+          ),
+        );
+        if (_captureRecords.length > 8) {
+          _captureRecords.removeRange(8, _captureRecords.length);
+        }
+      });
+    }, successMessage: '设备抓拍已触发。');
+  }
+
+  Future<void> _applyLatestBackendAiLock() async {
+    await _runAction(() async {
+      final captures = await widget.mobileApiService.getHistoryCaptures(
+        accessToken: widget.accessToken,
+      );
+      if (captures.isEmpty) {
+        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍。');
+      }
+
+      final latestCapture = _pickLatestCapture(captures);
+      final task = await widget.mobileApiService.analyzeBackground(
+        accessToken: widget.accessToken,
+        sessionId: latestCapture.sessionId,
+        captureId: latestCapture.id,
+      );
+
+      if (task.status != 'succeeded') {
+        throw ApiException(task.errorMessage ?? '后端 AI 锁机位任务失败，已阻止下发到设备。');
+      }
+
+      final targetBoxNorm = task.targetBoxNorm;
+      final panDelta = task.recommendedPanDelta;
+      final tiltDelta = task.recommendedTiltDelta;
+      if (targetBoxNorm == null || panDelta == null || tiltDelta == null) {
+        throw const ApiException('后端 AI 任务没有返回完整的锁机位数据。');
+      }
+
+      final status = await _deviceApiService.applyLock(
+        baseUrl: _baseUrlController.text,
+        recommendedPanDelta: panDelta,
+        recommendedTiltDelta: tiltDelta,
+        targetBoxNorm: targetBoxNorm,
+        summary: task.resultSummary ?? '应用后端 AI 锁机位建议。',
+        score: (task.resultScore ?? 90).toDouble(),
+      );
+
+      setState(() {
+        _status = status;
+        _lastBackendAiTask = task;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '最新后端 AI 锁机位任务已下发到设备。');
+  }
+
+  Future<void> _applyLatestBackendAiAngle() async {
+    await _runAction(() async {
+      final captures = await widget.mobileApiService.getHistoryCaptures(
+        accessToken: widget.accessToken,
+      );
+      if (captures.isEmpty) {
+        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍。');
+      }
+
+      final latestCapture = _pickLatestCapture(captures);
+      final task = await widget.mobileApiService.analyzePhoto(
+        accessToken: widget.accessToken,
+        sessionId: latestCapture.sessionId,
+        captureId: latestCapture.id,
+      );
+
+      if (task.status != 'succeeded') {
+        throw ApiException(task.errorMessage ?? '后端 AI 角度任务失败，已阻止下发到设备。');
+      }
+
+      final panDelta = task.recommendedPanDelta;
+      final tiltDelta = task.recommendedTiltDelta;
+      if (panDelta == null || tiltDelta == null) {
+        throw const ApiException('后端 AI 任务没有返回完整的角度调整数据。');
+      }
+
+      final status = await _deviceApiService.applyAngle(
+        baseUrl: _baseUrlController.text,
+        recommendedPanDelta: panDelta,
+        recommendedTiltDelta: tiltDelta,
+        summary: task.resultSummary ?? '应用后端 AI 角度建议。',
+        score: (task.resultScore ?? 88).toDouble(),
+      );
+
+      setState(() {
+        _status = status;
+        _lastBackendAiTask = task;
+        _lastStatusUpdatedAt = DateTime.now();
+      });
+    }, successMessage: '最新后端 AI 角度任务已下发到设备。');
+  }
+
+  List<double> _resolveTargetBoxNorm() {
+    final raw = _selectedTemplate?.templateData['bbox_norm'];
+    if (raw is List) {
+      final values = raw
+          .whereType<num>()
+          .map((value) => value.toDouble())
+          .toList();
+      if (values.length == 4) {
+        return values;
+      }
+    }
+    return <double>[0.32, 0.12, 0.34, 0.70];
+  }
+
+  TemplateSummary? _resolveInitialTemplate(List<TemplateSummary> templates) {
+    final initialTemplate = widget.initialTemplate;
+    if (templates.isEmpty) {
+      return initialTemplate;
+    }
+    if (initialTemplate == null) {
+      return templates.first;
+    }
+    for (final template in templates) {
+      if (template.id == initialTemplate.id) {
+        return template;
+      }
+    }
+    return initialTemplate;
+  }
+
+  CaptureRecord _pickLatestCapture(List<CaptureRecord> captures) {
+    final sorted = List<CaptureRecord>.from(captures)
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return sorted.first;
+  }
+
+  Future<void> _refreshStatusSilently() async {
+    final status = await _deviceApiService.getStatus(
+      baseUrl: _baseUrlController.text,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _status = status;
+      _lastStatusUpdatedAt = DateTime.now();
+    });
+  }
+
+  Future<void> _refreshHealthSilently() async {
+    final health = await _deviceApiService.getHealth(
+      baseUrl: _baseUrlController.text,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _health = health;
+    });
+  }
+
+  void _restartPolling() {
+    _pollTimer?.cancel();
+    if (!_autoRefreshEnabled) {
+      return;
+    }
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted || _isBusy) {
+        return;
+      }
+      if (_status?.sessionOpened != true) {
+        return;
+      }
+      try {
+        await _refreshStatusSilently();
+      } catch (_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _errorMessage = '自动刷新失败，请手动点击状态刷新后重试。';
+        });
+      }
+    });
+  }
+
+  void _toggleAutoRefresh(bool value) {
+    setState(() {
+      _autoRefreshEnabled = value;
+      if (!value) {
+        _syncMessage = '自动刷新已暂停。';
+      } else {
+        _syncMessage = '自动刷新已开启。';
+      }
+    });
+    _persistDraftConfig();
+    _restartPolling();
+  }
+
+  String _formatUpdatedAt() {
+    final updatedAt = _lastStatusUpdatedAt;
+    if (updatedAt == null) {
+      return '-';
+    }
+    final hh = updatedAt.hour.toString().padLeft(2, '0');
+    final mm = updatedAt.minute.toString().padLeft(2, '0');
+    final ss = updatedAt.second.toString().padLeft(2, '0');
+    return '$hh:$mm:$ss';
+  }
+
+  String _buildPreviewUrl() {
+    final baseUrl = _baseUrlController.text.trim();
+    final normalizedBaseUrl = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    final nonce =
+        _lastStatusUpdatedAt?.millisecondsSinceEpoch ??
+        DateTime.now().millisecondsSinceEpoch;
+    return '$normalizedBaseUrl/api/device/preview.jpg?ts=$nonce';
+  }
+
+  Widget _buildPreviewSection(BuildContext context) {
+    final hasSession = _status?.sessionOpened == true;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '设备画面',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4F1EA),
+                    border: Border.all(color: const Color(0xFFD7D0C4)),
+                  ),
+                  child: hasSession
+                      ? Stack(
+                          fit: StackFit.expand,
+                          children: <Widget>[
+                            Image.network(
+                              _buildPreviewUrl(),
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              loadingBuilder:
+                                  (
+                                    BuildContext context,
+                                    Widget child,
+                                    ImageChunkEvent? progress,
+                                  ) {
+                                    if (progress == null) {
+                                      return child;
+                                    }
+                                    return const _PreviewEmptyState(
+                                      icon: Icons.camera_outdoor_outlined,
+                                      title: '正在加载设备画面',
+                                      description:
+                                          '已打开设备会话，正在尝试拉取最新预览帧。',
+                                    );
+                                  },
+                              errorBuilder:
+                                  (
+                                    BuildContext context,
+                                    Object error,
+                                    StackTrace? stackTrace,
+                                  ) {
+                                    return const _PreviewEmptyState(
+                                      icon: Icons.wifi_tethering_error_rounded,
+                                      title: '暂时无法显示设备画面',
+                                      description:
+                                          '预览帧拉取失败。请确认设备会话已打开，并检查设备地址与视频流地址是否可用。',
+                                    );
+                                  },
+                            ),
+                            Positioned(
+                              left: 14,
+                              top: 14,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.62),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text(
+                                  '设备实时预览',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : const _PreviewEmptyState(
+                          icon: Icons.videocam_off_outlined,
+                          title: '等待打开设备会话',
+                          description:
+                              '会话打开后，这里会显示设备返回的最新预览帧，方便你边看画面边做控制。',
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '视频流地址：${_status?.streamUrl ?? _streamUrlController.text.trim()}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6A6258)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime value) {
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    final hh = value.hour.toString().padLeft(2, '0');
+    final mm = value.minute.toString().padLeft(2, '0');
+    final ss = value.second.toString().padLeft(2, '0');
+    return '$month-$day $hh:$mm:$ss';
+  }
+
+  String _actionCategoryLabel(String category) {
+    switch (category) {
+      case 'error':
+        return '错误';
+      case 'system':
+        return '系统';
+      case 'capture':
+        return '抓拍';
+      default:
+        return category;
+    }
+  }
+
+  void _addActionRecord(String category, String message) {
+    _actionRecords.insert(
+      0,
+      _DeviceActionRecord(
+        category: category,
+        message: message,
+        createdAt: DateTime.now(),
+      ),
+    );
+    if (_actionRecords.length > 16) {
+      _actionRecords.removeRange(16, _actionRecords.length);
+    }
+  }
+
+  String _buildSessionCode() {
+    final now = DateTime.now();
+    final datePart =
+        '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}';
+    final timePart =
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}';
+    return 'MOBILE_${datePart}_$timePart';
+  }
+
+  Future<void> _loadPersistedConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final recentRaw =
+        prefs.getStringList(_prefsRecentConnectionsKey) ?? <String>[];
+    final recentConnections = recentRaw
+        .map(_DeviceConnectionPreset.tryParse)
+        .whereType<_DeviceConnectionPreset>()
+        .toList(growable: false);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _baseUrlController.text =
+          prefs.getString(_prefsBaseUrlKey) ?? _baseUrlController.text;
+      _streamUrlController.text =
+          prefs.getString(_prefsStreamUrlKey) ?? _streamUrlController.text;
+      _autoRefreshEnabled =
+          prefs.getBool(_prefsAutoRefreshKey) ?? _autoRefreshEnabled;
+      _recentConnections = recentConnections;
+    });
+    _restartPolling();
+  }
+
+  void _scheduleDraftPersist() {
+    _persistTimer?.cancel();
+    _persistTimer = Timer(
+      const Duration(milliseconds: 300),
+      _persistDraftConfig,
+    );
+  }
+
+  Future<void> _persistDraftConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsBaseUrlKey, _baseUrlController.text.trim());
+    await prefs.setString(_prefsStreamUrlKey, _streamUrlController.text.trim());
+    await prefs.setBool(_prefsAutoRefreshKey, _autoRefreshEnabled);
+  }
+
+  Future<void> _rememberCurrentConnection() async {
+    final preset = _DeviceConnectionPreset(
+      baseUrl: _baseUrlController.text.trim(),
+      streamUrl: _streamUrlController.text.trim(),
+      sessionCode: _sessionCodeController.text.trim(),
+      updatedAt: DateTime.now(),
+    );
+    final merged = <_DeviceConnectionPreset>[
+      preset,
+      ..._recentConnections.where(
+        (item) =>
+            item.baseUrl != preset.baseUrl ||
+            item.streamUrl != preset.streamUrl,
+      ),
+    ];
+    final limited = merged.take(6).toList(growable: false);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _prefsRecentConnectionsKey,
+      limited.map((item) => item.toStorageString()).toList(growable: false),
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _recentConnections = limited;
+    });
+  }
+
+  void _applyConnectionPreset(_DeviceConnectionPreset preset) {
+    setState(() {
+      _baseUrlController.text = preset.baseUrl;
+      _streamUrlController.text = preset.streamUrl;
+      _sessionCodeController.text = _buildSessionCode();
+      _syncMessage = '已载入最近连接配置。';
+    });
+    _persistDraftConfig();
+  }
+
+  Future<void> _clearRecentConnections() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefsRecentConnectionsKey);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _recentConnections = const <_DeviceConnectionPreset>[];
+      _syncMessage = '最近连接记录已清空。';
+    });
+  }
+
+  DeviceLinkResult _buildReturnResult() {
+    return DeviceLinkResult(
+      selectedTemplateId: _selectedTemplate?.id,
+      selectedTemplateName: _selectedTemplate?.name,
+      deviceSessionCode:
+          _status?.sessionCode ?? _sessionCodeController.text.trim(),
+      lastCapturePath: _lastCapturePath,
+      backendTaskCode: _lastBackendAiTask?.taskCode,
+      aiLockEnabled: _status?.aiLockEnabled ?? false,
+    );
+  }
+
+  void _returnToCameraPage() {
+    Navigator.of(context).pop<DeviceLinkResult>(_buildReturnResult());
+  }
+
+  String _statusHeadline() {
+    if (_status?.sessionOpened == true) {
+      return '设备会话运行中';
+    }
+    if (_health != null) {
+      return '设备服务可访问';
+    }
+    return '等待连接设备';
+  }
+
+  String _statusDescription() {
+    if (_status?.sessionOpened == true) {
+      return '当前会话 ${_status?.sessionCode ?? '-'} 已打开，可继续执行控制、模板下发和 AI 动作。';
+    }
+    if (_health != null) {
+      return '本地设备运行时已启动，但当前还没有打开设备会话。';
+    }
+    return '先填写设备地址和视频流地址，再执行健康检查或打开会话。';
+  }
+
+  Widget _buildStatusOverviewSection(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '设备概览',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _statusHeadline(),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(
+                              color: const Color(0xFF0D5C63),
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _statusDescription(),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          height: 1.5,
+                          color: const Color(0xFF5A6B70),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0x140D5C63),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Icon(
+                      _status?.sessionOpened == true
+                          ? Icons.router_outlined
+                          : Icons.devices_other_outlined,
+                      color: const Color(0xFF0D5C63),
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: <Widget>[
+                _StatusPill(
+                  label: '设备',
+                  value: _status?.deviceStatus ?? _health?.status ?? '未知',
+                  active:
+                      _status?.deviceStatus == 'online' ||
+                      _health?.status == 'online',
+                ),
+                _StatusPill(
+                  label: '会话',
+                  value: _status?.sessionOpened == true ? '已打开' : '未打开',
+                  active: _status?.sessionOpened == true,
+                ),
+                _StatusPill(
+                  label: '模式',
+                  value: _status?.mode ?? 'MANUAL',
+                  active: _status != null,
+                ),
+                _StatusPill(
+                  label: '模板',
+                  value: _status?.selectedTemplateId?.toString() ?? '未下发',
+                  active: _status?.selectedTemplateId != null,
+                ),
+                _StatusPill(
+                  label: 'AI 锁机位',
+                  value: _status?.aiLockEnabled == true ? '开启' : '关闭',
+                  active: _status?.aiLockEnabled == true,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 18,
+              runSpacing: 10,
+              children: <Widget>[
+                _SummaryLine(
+                  label: '会话编号',
+                  value:
+                      _status?.sessionCode ??
+                      _health?.sessionCode ??
+                      _sessionCodeController.text.trim(),
+                ),
+                _SummaryLine(
+                  label: '最近刷新',
+                  value: _formatUpdatedAt(),
+                ),
+                _SummaryLine(
+                  label: '跟随模式',
+                  value: _status?.followMode ?? '未设置',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
+  Widget _buildPreviewPlaceholderSection(BuildContext context) {
+    final hasSession = _status?.sessionOpened == true;
+    final description = hasSession
+        ? '当前会话已经打开。下一阶段会在这里接入设备画面预览；现在先用状态回显和控制链路确认联动正常。'
+        : '会话未打开时，这里显示设备画面预览的空状态。先打开会话，后续再接入真实预览能力。';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '设备画面',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F1EA),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: const Color(0xFFD7D0C4)),
+                ),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: <Widget>[
+                        Icon(
+                          hasSession
+                              ? Icons.live_tv_outlined
+                              : Icons.videocam_off_outlined,
+                          size: 34,
+                          color: const Color(0xFF0D5C63),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          hasSession ? '预览区占位已准备' : '等待打开设备会话',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF17313A),
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          description,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: const Color(0xFF5A6B70),
+                                height: 1.5,
+                              ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '视频流地址：${_status?.streamUrl ?? _streamUrlController.text.trim()}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6A6258)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCoreControlsSection(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '核心动作',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '把首屏保留给最常用的设备连接、会话控制和方向控制。模板、AI 和日志信息放到下面的扩展区域。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF5A6B70)),
+            ),
+            const SizedBox(height: 18),
+            _InputBlock(
+              label: '设备地址',
+              hintText: 'http://192.168.31.10:8001',
+              controller: _baseUrlController,
+            ),
+            const SizedBox(height: 12),
+            _InputBlock(
+              label: '视频流地址',
+              hintText: 'rtsp://192.168.31.20/live',
+              controller: _streamUrlController,
+            ),
+            const SizedBox(height: 12),
+            _InputBlock(
+              label: '会话编号',
+              hintText: 'MOBILE_20260418_131500',
+              controller: _sessionCodeController,
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : _checkHealth,
+                    icon: const Icon(Icons.health_and_safety_outlined),
+                    label: const Text('健康检查'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : _fetchStatus,
+                    icon: const Icon(Icons.radar_outlined),
+                    label: const Text('刷新状态'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _isBusy ? null : _openSession,
+                    icon: const Icon(Icons.link_outlined),
+                    label: const Text('打开会话'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isBusy ? null : _closeSession,
+                    icon: const Icon(Icons.link_off_outlined),
+                    label: const Text('关闭会话'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Text(
+              '方向控制',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: Column(
+                children: <Widget>[
+                  FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : () => _manualMove('up'),
+                    icon: const Icon(Icons.keyboard_arrow_up),
+                    label: const Text('上移'),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      FilledButton.tonalIcon(
+                        onPressed: _isBusy ? null : () => _manualMove('left'),
+                        icon: const Icon(Icons.keyboard_arrow_left),
+                        label: const Text('左移'),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        onPressed: _isBusy ? null : _home,
+                        icon: const Icon(Icons.center_focus_strong_outlined),
+                        label: const Text('回中'),
+                      ),
+                      const SizedBox(width: 10),
+                      FilledButton.tonalIcon(
+                        onPressed: _isBusy ? null : () => _manualMove('right'),
+                        icon: const Icon(Icons.keyboard_arrow_right),
+                        label: const Text('右移'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : () => _manualMove('down'),
+                    icon: const Icon(Icons.keyboard_arrow_down),
+                    label: const Text('下移'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              '运行模式',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: _modes
+                  .map(
+                    (mode) => _ModeChip(
+                      label: mode,
+                      selected: _status?.mode == mode,
+                      onTap: _isBusy ? null : () => _setMode(mode),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              '跟随模式',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: _followModes
+                  .map(
+                    (mode) => _ModeChip(
+                      label: mode,
+                      selected: _status?.followMode == mode,
+                      onTap: _isBusy ? null : () => _setFollowMode(mode),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSecondarySectionLabel(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        title,
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('设备联动页'),
+        leading: IconButton(
+          onPressed: _returnToCameraPage,
+          icon: const Icon(Icons.arrow_back),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+        children: <Widget>[
+          _buildStatusOverviewSection(context),
+          const SizedBox(height: 18),
+          _buildPreviewSection(context),
+          const SizedBox(height: 18),
+          _buildCoreControlsSection(context),
+          const SizedBox(height: 22),
+          FilledButton.icon(
+            onPressed: _returnToCameraPage,
+            icon: const Icon(Icons.camera_alt_outlined),
+            label: const Text('返回拍照页并同步'),
+          ),
+          const SizedBox(height: 22),
+          _buildSecondarySectionLabel(context, '扩展联动'),
+          _InfoSection(
+            title: '最近连接',
+            child: _recentConnections.isEmpty
+                ? const Text('还没有最近设备连接记录。')
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _clearRecentConnections,
+                          child: const Text('清空记录'),
+                        ),
+                      ),
+                      ..._recentConnections.map(
+                        (preset) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: OutlinedButton(
+                            onPressed: _isBusy
+                                ? null
+                                : () => _applyConnectionPreset(preset),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.all(14),
+                              alignment: Alignment.centerLeft,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  preset.baseUrl,
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${preset.streamUrl} · ${_formatDateTime(preset.updatedAt)}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+          _InfoSection(
+            title: '模板下发',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        '模板列表',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _isCreatingDemoTemplate
+                          ? null
+                          : _createTemplate,
+                      child: _isCreatingDemoTemplate
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('新增模板'),
+                    ),
+                  ],
+                ),
+                if (_selectedTemplate != null) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _isDeletingTemplate
+                          ? null
+                          : _deleteSelectedTemplate,
+                      child: _isDeletingTemplate
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('删除当前模板'),
+                    ),
+                  ),
+                ],
+                if (_isLoadingTemplates) ...<Widget>[
+                  const SizedBox(height: 10),
+                  const LinearProgressIndicator(minHeight: 3),
+                ] else if (_templates.isEmpty) ...<Widget>[
+                  const SizedBox(height: 10),
+                  const Text('还没有模板，可以先新增一个模板。'),
+                ] else ...<Widget>[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: _templates
+                        .map(
+                          (template) => _ModeChip(
+                            label: template.name,
+                            selected: _selectedTemplate?.id == template.id,
+                            onTap: _isBusy
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _selectedTemplate = template;
+                                      _syncMessage = '已选择模板：${template.name}';
+                                    });
+                                  },
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonalIcon(
+                    onPressed: _isBusy ? null : _pushTemplate,
+                    icon: const Icon(Icons.upload_outlined),
+                    label: Text(
+                      _selectedTemplate == null
+                          ? '下发模板'
+                          : '下发 ${_selectedTemplate!.name}',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _InfoSection(
+            title: 'AI 动作与抓拍',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  '这里可以通过本地设备 API 执行示例角度建议、示例锁机位建议，或者直接从当前画面触发抓拍。',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(height: 1.5),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: <Widget>[
+                    FilledButton.tonalIcon(
+                      onPressed: _isBusy ? null : _applyAngleSuggestion,
+                      icon: const Icon(Icons.auto_fix_high_outlined),
+                      label: const Text('应用角度'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _isBusy ? null : _applyLockSuggestion,
+                      icon: const Icon(Icons.lock_outline),
+                      label: const Text('应用锁机位'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _isBusy ? null : _triggerCapture,
+                      icon: const Icon(Icons.camera_outlined),
+                      label: const Text('触发抓拍'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _isBusy ? null : _applyLatestBackendAiLock,
+                      icon: const Icon(Icons.cloud_sync_outlined),
+                      label: const Text('应用后端 AI 锁机位'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _isBusy ? null : _applyLatestBackendAiAngle,
+                      icon: const Icon(Icons.tune_outlined),
+                      label: const Text('应用后端 AI 角度'),
+                    ),
+                  ],
+                ),
+                if (_lastCapturePath != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text('最近抓拍路径：$_lastCapturePath'),
+                ],
+                if (_lastBackendAiTask != null) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text('后端任务编号：${_lastBackendAiTask!.taskCode}'),
+                  const SizedBox(height: 6),
+                  Text('后端任务状态：${_lastBackendAiTask!.status}'),
+                  const SizedBox(height: 6),
+                  Text('后端任务摘要：${_lastBackendAiTask!.resultSummary ?? '-'}'),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _InfoSection(
+            title: '实时反馈',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        '最后刷新时间：${_formatUpdatedAt()}',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                    Switch(
+                      value: _autoRefreshEnabled,
+                      onChanged: _toggleAutoRefresh,
+                    ),
+                  ],
+                ),
+                Text(
+                  _autoRefreshEnabled
+                      ? '当设备会话处于打开状态时，页面会每 3 秒自动刷新一次。'
+                      : '自动刷新已暂停，请手动点击“刷新状态”或执行任意控制动作更新页面。',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(height: 1.5),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: <Widget>[
+                    _StatusPill(
+                      label: '设备',
+                      value: _status?.deviceStatus ?? '空闲',
+                      active: _status?.deviceStatus == 'online',
+                    ),
+                    _StatusPill(
+                      label: '会话',
+                      value: _status?.sessionOpened == true ? '已打开' : '已关闭',
+                      active: _status?.sessionOpened == true,
+                    ),
+                    _StatusPill(
+                      label: '模板',
+                      value: _status?.selectedTemplateId?.toString() ?? '未选',
+                      active: _status?.selectedTemplateId != null,
+                    ),
+                    _StatusPill(
+                      label: 'AI 锁机位',
+                      value: _status?.aiLockEnabled == true ? '开启' : '关闭',
+                      active: _status?.aiLockEnabled == true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _InfoSection(
+            title: '最近抓拍',
+            child: _captureRecords.isEmpty
+                ? const Text('还没有设备抓拍记录。')
+                : Column(
+                    children: _captureRecords
+                        .map(
+                          (record) => _TimelineTile(
+                            title: record.path,
+                            subtitle:
+                                '${record.source} · ${_formatDateTime(record.createdAt)}',
+                            accentColor: const Color(0xFF3A7D44),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+          ),
+          const SizedBox(height: 14),
+          _InfoSection(
+            title: '操作时间线',
+            child: _actionRecords.isEmpty
+                ? const Text('还没有设备操作记录。')
+                : Column(
+                    children: _actionRecords
+                        .map(
+                          (record) => _TimelineTile(
+                            title: record.message,
+                            subtitle:
+                                '${_actionCategoryLabel(record.category)} · ${_formatDateTime(record.createdAt)}',
+                            accentColor: record.category == 'error'
+                                ? const Color(0xFF9E2A2B)
+                                : const Color(0xFF0D5C63),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+          ),
+          if (_isBusy) ...<Widget>[
+            const SizedBox(height: 14),
+            const LinearProgressIndicator(minHeight: 3),
+          ],
+          if (_syncMessage != null) ...<Widget>[
+            const SizedBox(height: 14),
+            _NoticeCard(
+              message: _syncMessage!,
+              backgroundColor: const Color(0x142C6E49),
+              textColor: const Color(0xFF2C6E49),
+            ),
+          ],
+          if (_errorMessage != null) ...<Widget>[
+            const SizedBox(height: 14),
+            _NoticeCard(
+              message: _errorMessage!,
+              backgroundColor: const Color(0x149E2A2B),
+              textColor: const Color(0xFF9E2A2B),
+            ),
+          ],
+          const SizedBox(height: 18),
+          _InfoSection(
+            title: '健康检查结果',
+            child: _health == null
+                ? const Text('还没有健康检查结果。')
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('设备编号：${_health!.deviceCode}'),
+                      const SizedBox(height: 6),
+                      Text('状态：${_health!.status}'),
+                      const SizedBox(height: 6),
+                      Text('服务版本：${_health!.serviceVersion}'),
+                      const SizedBox(height: 6),
+                      Text('会话编号：${_health!.sessionCode ?? '-'}'),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 14),
+          _InfoSection(
+            title: '运行状态',
+            child: _status == null
+                ? const Text('还没有加载运行状态。')
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text('会话是否打开：${_status!.sessionOpened}'),
+                      const SizedBox(height: 6),
+                      Text('会话编号：${_status!.sessionCode ?? '-'}'),
+                      const SizedBox(height: 6),
+                      Text('视频流地址：${_status!.streamUrl ?? '-'}'),
+                      const SizedBox(height: 6),
+                      Text('运行模式：${_status!.mode}'),
+                      const SizedBox(height: 6),
+                      Text('跟随模式：${_status!.followMode ?? '-'}'),
+                      const SizedBox(height: 6),
+                      Text('设备状态：${_status!.deviceStatus}'),
+                      const SizedBox(height: 6),
+                      Text('当前水平角：${_status!.currentPan.toStringAsFixed(2)}'),
+                      const SizedBox(height: 6),
+                      Text('当前俯仰角：${_status!.currentTilt.toStringAsFixed(2)}'),
+                      const SizedBox(height: 6),
+                      Text('处理循环运行中：${_status!.loopRunning}'),
+                      const SizedBox(height: 6),
+                      Text(
+                        '选中模板编号：${_status!.selectedTemplateId?.toString() ?? '-'}',
+                      ),
+                      const SizedBox(height: 6),
+                      Text('AI 锁机位开启：${_status!.aiLockEnabled}'),
+                      const SizedBox(height: 6),
+                      Text(
+                        'AI 锁机位拟合分：${_status!.aiLockFitScore.toStringAsFixed(2)}',
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'AI 锁机位目标框：${_status!.aiLockTargetBoxNorm?.join(', ') ?? '-'}',
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InputBlock extends StatelessWidget {
+  const _InputBlock({
+    required this.label,
+    required this.hintText,
+    required this.controller,
+  });
+
+  final String label;
+  final String hintText;
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          decoration: InputDecoration(
+            hintText: hintText,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoSection extends StatelessWidget {
+  const _InfoSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoticeCard extends StatelessWidget {
+  const _NoticeCard({
+    required this.message,
+    required this.backgroundColor,
+    required this.textColor,
+  });
+
+  final String message;
+  final Color backgroundColor;
+  final Color textColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Text(
+          message,
+          style: TextStyle(color: textColor, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeChip extends StatelessWidget {
+  const _ModeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF0D5C63) : Colors.white10,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? const Color(0xFF0D5C63) : Colors.black12,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : const Color(0xFF17313A),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.label,
+    required this.value,
+    required this.active,
+  });
+
+  final String label;
+  final String value;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: active ? const Color(0x140D5C63) : const Color(0xFFF4F1EA),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: active ? const Color(0xFF0D5C63) : const Color(0xFFD3C7B8),
+        ),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(
+          color: active ? const Color(0xFF0D5C63) : const Color(0xFF6A6258),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewEmptyState extends StatelessWidget {
+  const _PreviewEmptyState({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(icon, size: 34, color: const Color(0xFF0D5C63)),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF17313A),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF5A6B70),
+                height: 1.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryLine extends StatelessWidget {
+  const _SummaryLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6A6258)),
+        children: <InlineSpan>[
+          TextSpan(
+            text: '$label：',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          TextSpan(text: value),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineTile extends StatelessWidget {
+  const _TimelineTile({
+    required this.title,
+    required this.subtitle,
+    required this.accentColor,
+  });
+
+  final String title;
+  final String subtitle;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            width: 10,
+            height: 10,
+            margin: const EdgeInsets.only(top: 6),
+            decoration: BoxDecoration(
+              color: accentColor,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF6A6258),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceActionRecord {
+  const _DeviceActionRecord({
+    required this.category,
+    required this.message,
+    required this.createdAt,
+  });
+
+  final String category;
+  final String message;
+  final DateTime createdAt;
+}
+
+class _DeviceCaptureRecord {
+  const _DeviceCaptureRecord({
+    required this.path,
+    required this.createdAt,
+    required this.source,
+  });
+
+  final String path;
+  final DateTime createdAt;
+  final String source;
+}
+
+class _DeviceConnectionPreset {
+  const _DeviceConnectionPreset({
+    required this.baseUrl,
+    required this.streamUrl,
+    required this.sessionCode,
+    required this.updatedAt,
+  });
+
+  final String baseUrl;
+  final String streamUrl;
+  final String sessionCode;
+  final DateTime updatedAt;
+
+  String toStorageString() {
+    return jsonEncode(<String, dynamic>{
+      'base_url': baseUrl,
+      'stream_url': streamUrl,
+      'session_code': sessionCode,
+      'updated_at': updatedAt.toIso8601String(),
+    });
+  }
+
+  static _DeviceConnectionPreset? tryParse(String raw) {
+    try {
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      return _DeviceConnectionPreset(
+        baseUrl: json['base_url'] as String? ?? '',
+        streamUrl: json['stream_url'] as String? ?? '',
+        sessionCode: json['session_code'] as String? ?? '',
+        updatedAt: DateTime.parse(
+          json['updated_at'] as String? ?? DateTime.now().toIso8601String(),
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}

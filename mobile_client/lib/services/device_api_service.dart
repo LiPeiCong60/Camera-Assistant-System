@@ -1,0 +1,287 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
+
+import '../models/device_health_summary.dart';
+import '../models/device_status_summary.dart';
+import 'api_client.dart';
+
+class DeviceApiService {
+  const DeviceApiService();
+
+  static const Duration _requestTimeout = Duration(seconds: 10);
+
+  Future<DeviceHealthSummary> getHealth({required String baseUrl}) async {
+    final data = await _getJson(baseUrl, '/api/device/health');
+    return DeviceHealthSummary.fromJson(data);
+  }
+
+  Future<DeviceStatusSummary> getStatus({required String baseUrl}) async {
+    final data = await _getJson(baseUrl, '/api/device/status');
+    return DeviceStatusSummary.fromJson(data);
+  }
+
+  Future<DeviceStatusSummary> openSession({
+    required String baseUrl,
+    required String sessionCode,
+    required String streamUrl,
+    bool mirrorView = true,
+    String startMode = 'MANUAL',
+  }) async {
+    final data =
+        await _postJson(baseUrl, '/api/device/session/open', <String, dynamic>{
+          'session_code': sessionCode,
+          'stream_url': streamUrl,
+          'mirror_view': mirrorView,
+          'start_mode': startMode,
+        });
+    return DeviceStatusSummary(
+      sessionOpened: true,
+      sessionCode: data['session_code'] as String?,
+      streamUrl: data['stream_url'] as String?,
+      mode: data['mode'] as String? ?? startMode,
+      followMode: null,
+      deviceStatus: 'online',
+      currentPan: 0,
+      currentTilt: 0,
+      loopRunning: true,
+    );
+  }
+
+  Future<bool> closeSession({
+    required String baseUrl,
+    String? sessionCode,
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/session/close',
+      <String, dynamic>{'session_code': sessionCode},
+    );
+    return data['closed'] as bool? ?? false;
+  }
+
+  Future<DeviceStatusSummary> manualMove({
+    required String baseUrl,
+    String? action,
+    double? panDelta,
+    double? tiltDelta,
+  }) async {
+    await _postJson(
+      baseUrl,
+      '/api/device/control/manual-move',
+      <String, dynamic>{
+        'action': action,
+        'pan_delta': panDelta,
+        'tilt_delta': tiltDelta,
+      },
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> setMode({
+    required String baseUrl,
+    required String mode,
+  }) async {
+    await _postJson(baseUrl, '/api/device/control/mode', <String, dynamic>{
+      'mode': mode,
+    });
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> home({required String baseUrl}) async {
+    await _postJson(baseUrl, '/api/device/control/home', <String, dynamic>{});
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> setFollowMode({
+    required String baseUrl,
+    required String followMode,
+  }) async {
+    await _postJson(
+      baseUrl,
+      '/api/device/control/follow-mode',
+      <String, dynamic>{'follow_mode': followMode},
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> selectTemplate({
+    required String baseUrl,
+    required int templateId,
+    required Map<String, dynamic> templateData,
+  }) async {
+    await _postJson(baseUrl, '/api/device/templates/select', <String, dynamic>{
+      'template_id': templateId,
+      'template_data': templateData,
+    });
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> applyAngle({
+    required String baseUrl,
+    required double recommendedPanDelta,
+    required double recommendedTiltDelta,
+    String summary = 'Apply mobile AI angle suggestion.',
+    double score = 88,
+  }) async {
+    await _postJson(baseUrl, '/api/device/ai/apply-angle', <String, dynamic>{
+      'task_type': 'auto_angle',
+      'recommended_pan_delta': recommendedPanDelta,
+      'recommended_tilt_delta': recommendedTiltDelta,
+      'summary': summary,
+      'score': score,
+    });
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> applyLock({
+    required String baseUrl,
+    required double recommendedPanDelta,
+    required double recommendedTiltDelta,
+    required List<double> targetBoxNorm,
+    String summary = 'Apply mobile AI lock suggestion.',
+    double score = 92,
+  }) async {
+    await _postJson(baseUrl, '/api/device/ai/apply-lock', <String, dynamic>{
+      'task_type': 'background_lock',
+      'recommended_pan_delta': recommendedPanDelta,
+      'recommended_tilt_delta': recommendedTiltDelta,
+      'target_box_norm': targetBoxNorm,
+      'summary': summary,
+      'score': score,
+    });
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<String> triggerCapture({
+    required String baseUrl,
+    String reason = 'mobile_manual',
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/capture/trigger',
+      <String, dynamic>{'reason': reason},
+    );
+    return data['capture_path'] as String? ?? '';
+  }
+
+  Future<Map<String, dynamic>> _getJson(String baseUrl, String path) async {
+    final response = await _send(
+      () => http.get(
+        Uri.parse('${_normalizeBaseUrl(baseUrl)}$path'),
+        headers: const <String, String>{'Accept': 'application/json'},
+      ),
+    );
+    return _decodeEnvelope(response);
+  }
+
+  Future<Map<String, dynamic>> _postJson(
+    String baseUrl,
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await _send(
+      () => http.post(
+        Uri.parse('${_normalizeBaseUrl(baseUrl)}$path'),
+        headers: const <String, String>{
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(body),
+      ),
+    );
+    return _decodeEnvelope(response);
+  }
+
+  Future<http.Response> _send(Future<http.Response> Function() request) async {
+    try {
+      return await request().timeout(_requestTimeout);
+    } on TimeoutException {
+      throw const ApiException('设备响应超时，请检查设备地址或稍后重试。');
+    } on SocketException {
+      throw const ApiException('无法连接设备，请确认本地运行时服务已启动且地址正确。');
+    } on http.ClientException {
+      throw const ApiException('设备请求失败，请检查设备地址和网络状态。');
+    }
+  }
+
+  String _normalizeBaseUrl(String rawBaseUrl) {
+    var normalized = rawBaseUrl.trim();
+    if (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    if (normalized.endsWith('/api')) {
+      normalized = normalized.substring(0, normalized.length - 4);
+    }
+    return normalized;
+  }
+
+  Map<String, dynamic> _decodeEnvelope(http.Response response) {
+    final body = _safeDecodeBody(response);
+    final success = body['success'] as bool? ?? false;
+    if (!success) {
+      final backendMessage = body['message'] as String?;
+      throw ApiException(
+        _humanizeErrorMessage(
+          response.statusCode,
+          backendMessage,
+          fallback: '设备请求失败，请稍后重试。',
+        ),
+        statusCode: response.statusCode,
+      );
+    }
+    return body['data'] as Map<String, dynamic>? ?? <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _safeDecodeBody(http.Response response) {
+    if (response.body.isEmpty) {
+      return <String, dynamic>{};
+    }
+
+    try {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } on FormatException {
+      throw ApiException(
+        response.statusCode >= 500
+            ? '设备服务暂时不可用，请稍后重试。'
+            : '设备返回了无法识别的数据，请稍后重试。',
+        statusCode: response.statusCode,
+      );
+    }
+  }
+
+  String _humanizeErrorMessage(
+    int statusCode,
+    String? backendMessage, {
+    required String fallback,
+  }) {
+    final normalizedMessage = backendMessage?.trim();
+    if (normalizedMessage == null ||
+        normalizedMessage.isEmpty ||
+        normalizedMessage == 'Not Found' ||
+        normalizedMessage == 'request failed') {
+      return _fallbackStatusMessage(statusCode, fallback);
+    }
+    return normalizedMessage;
+  }
+
+  String _fallbackStatusMessage(int statusCode, String fallback) {
+    switch (statusCode) {
+      case 400:
+        return '设备请求参数无效，请检查输入后重试。';
+      case 404:
+        return '设备接口不存在，请确认本地运行时服务已更新。';
+      case 409:
+        return '当前设备状态不允许执行该操作，请刷新后再试。';
+      case 422:
+        return '设备请求格式不正确，请检查输入后重试。';
+      default:
+        if (statusCode >= 500) {
+          return '设备服务暂时不可用，请稍后重试。';
+        }
+        return fallback;
+    }
+  }
+}
