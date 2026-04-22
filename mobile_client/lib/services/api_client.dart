@@ -17,7 +17,7 @@ class ApiException implements Exception {
 class ApiClient {
   ApiClient({
     required String baseUrl,
-    Duration requestTimeout = const Duration(seconds: 12),
+    Duration requestTimeout = const Duration(seconds: 90),
   }) : _baseUrl = _normalizeBaseUrl(baseUrl),
        _requestTimeout = requestTimeout;
 

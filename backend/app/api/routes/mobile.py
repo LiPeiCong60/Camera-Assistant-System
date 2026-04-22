@@ -54,6 +54,16 @@ def _build_upload_file_parts(upload: UploadFile) -> tuple[str, str]:
     return original_name, suffix
 
 
+def _is_supported_image_upload(upload: UploadFile) -> bool:
+    content_type = (upload.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+
+    filename = Path(upload.filename or "").name.lower()
+    suffix = Path(filename).suffix.lower()
+    return suffix in {".jpg", ".jpeg", ".png", ".webp"}
+
+
 def _store_capture_upload(request: Request, current_user: User, upload: UploadFile) -> CaptureUploadRead:
     settings = get_settings()
     original_name, suffix = _build_upload_file_parts(upload)
@@ -169,7 +179,7 @@ def upload_capture_file(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[CaptureUploadRead]:
-    if not file.content_type or not file.content_type.lower().startswith("image/"):
+    if not _is_supported_image_upload(file):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image uploads are supported")
     upload_data = _store_capture_upload(request, current_user, file)
     return ApiResponse(message="capture file uploaded", data=upload_data)

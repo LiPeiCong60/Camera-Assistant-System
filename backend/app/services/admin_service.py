@@ -32,6 +32,7 @@ from backend.app.schemas.plan import PlanWriteRequest
 from backend.app.schemas.statistics import OverviewStatisticsRead
 from backend.app.schemas.template import RecommendedTemplateWriteRequest
 from backend.app.schemas.user import UserCreateRequest, UserRead, UserUpdateRequest
+from backend.app.services.template_pose_service import TemplatePoseService
 
 
 def _utcnow() -> datetime:
@@ -240,13 +241,16 @@ class AdminService:
         current_admin: User,
         payload: RecommendedTemplateWriteRequest,
     ) -> Template:
+        template_data = self._resolve_recommended_template_data(payload)
+        source_image_url = self._normalize_optional_text(payload.source_image_url)
+        preview_image_url = self._normalize_optional_text(payload.preview_image_url) or source_image_url
         template = Template(
             user_id=current_admin.id,
             name=payload.name.strip(),
             template_type=payload.template_type,
-            source_image_url=self._normalize_optional_text(payload.source_image_url),
-            preview_image_url=self._normalize_optional_text(payload.preview_image_url),
-            template_data=payload.template_data,
+            source_image_url=source_image_url,
+            preview_image_url=preview_image_url,
+            template_data=template_data,
             is_recommended_default=True,
             recommended_sort_order=payload.recommended_sort_order,
             status=payload.status,
@@ -265,17 +269,39 @@ class AdminService:
         if template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="recommended template not found")
 
+        template_data = self._resolve_recommended_template_data(payload)
+        source_image_url = self._normalize_optional_text(payload.source_image_url)
+        preview_image_url = self._normalize_optional_text(payload.preview_image_url) or source_image_url
         template.name = payload.name.strip()
         template.template_type = payload.template_type
-        template.source_image_url = self._normalize_optional_text(payload.source_image_url)
-        template.preview_image_url = self._normalize_optional_text(payload.preview_image_url)
-        template.template_data = payload.template_data
+        template.source_image_url = source_image_url
+        template.preview_image_url = preview_image_url
+        template.template_data = template_data
         template.is_recommended_default = True
         template.recommended_sort_order = payload.recommended_sort_order
         template.status = payload.status
         self.session.commit()
         self.session.refresh(template)
         return template
+
+    def _resolve_recommended_template_data(
+        self,
+        payload: RecommendedTemplateWriteRequest,
+    ) -> dict:
+        if payload.template_data:
+            return payload.template_data
+
+        source_image_url = self._normalize_optional_text(payload.source_image_url)
+        if not source_image_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="template_data or source_image_url is required",
+            )
+
+        return TemplatePoseService().create_template_data(
+            name=payload.name.strip(),
+            source_image_url=source_image_url,
+        )
 
     def delete_recommended_template(self, template_id: int) -> None:
         template = self.template_repo.get_recommended_default(template_id)

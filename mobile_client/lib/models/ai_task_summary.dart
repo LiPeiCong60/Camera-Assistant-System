@@ -45,16 +45,17 @@ class AiTaskSummary {
           <String, dynamic>{},
       responsePayload: responsePayload,
       resultSummary: json['result_summary'] as String?,
-      resultScore: json['result_score'] as num?,
+      resultScore:
+          _readNum(json['result_score']) ?? _readNum(responsePayload['score']),
       targetBoxNorm: _readTargetBoxNorm(
         json['target_box_norm'] ?? responsePayload['target_box_norm'],
       ),
-      recommendedPanDelta:
-          (json['recommended_pan_delta'] as num?)?.toDouble() ??
-          (responsePayload['recommended_pan_delta'] as num?)?.toDouble(),
-      recommendedTiltDelta:
-          (json['recommended_tilt_delta'] as num?)?.toDouble() ??
-          (responsePayload['recommended_tilt_delta'] as num?)?.toDouble(),
+      recommendedPanDelta: (_readNum(json['recommended_pan_delta']) ??
+              _readNum(responsePayload['recommended_pan_delta']))
+          ?.toDouble(),
+      recommendedTiltDelta: (_readNum(json['recommended_tilt_delta']) ??
+              _readNum(responsePayload['recommended_tilt_delta']))
+          ?.toDouble(),
       errorMessage: json['error_message'] as String?,
       providerMetadata:
           responsePayload['provider_metadata'] as Map<String, dynamic>? ??
@@ -69,8 +70,22 @@ class AiTaskSummary {
     if (value is! List<dynamic> || value.length != 4) {
       return null;
     }
-    return value
-        .map((item) => (item as num).toDouble())
+    final numbers = value
+        .map((item) => _readNum(item)?.toDouble())
         .toList(growable: false);
+    if (numbers.any((item) => item == null)) {
+      return null;
+    }
+    return numbers.cast<double>();
+  }
+
+  static num? _readNum(dynamic value) {
+    if (value is num) {
+      return value;
+    }
+    if (value is String) {
+      return num.tryParse(value.trim());
+    }
+    return null;
   }
 }

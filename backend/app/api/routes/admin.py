@@ -1,11 +1,16 @@
-"""Admin-facing minimal read routes."""
+"""Admin-facing management routes."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies import get_current_admin, get_db_session
+from backend.app.core.config import get_settings
 from backend.app.models.ai_provider_config import AiProviderConfig
 from backend.app.models.user import User
 from backend.app.schemas import (
@@ -14,6 +19,7 @@ from backend.app.schemas import (
     AiTaskRead,
     ApiResponse,
     CaptureRead,
+    CaptureUploadRead,
     DeviceRead,
     DeviceWriteRequest,
     ListData,
@@ -32,6 +38,49 @@ from backend.app.services.auth_service import AuthService
 from backend.app.services.admin_service import AdminService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _build_upload_file_parts(upload: UploadFile) -> tuple[str, str]:
+    original_name = Path(upload.filename or "template.jpg").name
+    suffix = Path(original_name).suffix.lower()
+    if not suffix:
+        content_type = (upload.content_type or "").lower()
+        if content_type == "image/png":
+            suffix = ".png"
+        elif content_type == "image/webp":
+            suffix = ".webp"
+        else:
+            suffix = ".jpg"
+    return original_name, suffix
+
+
+def _is_supported_image_upload(upload: UploadFile) -> bool:
+    content_type = (upload.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+
+    filename = Path(upload.filename or "").name.lower()
+    suffix = Path(filename).suffix.lower()
+    return suffix in {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _store_template_upload(request: Request, current_admin: User, upload: UploadFile) -> CaptureUploadRead:
+    settings = get_settings()
+    original_name, suffix = _build_upload_file_parts(upload)
+    date_folder = datetime.now().strftime("%Y-%m-%d")
+    relative_path = Path("templates") / f"admin_{current_admin.id}" / date_folder / f"{uuid4().hex}{suffix}"
+    storage_path = Path(settings.uploads_dir) / relative_path
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_bytes(upload.file.read())
+    file_url = str(request.url_for("uploads", path=relative_path.as_posix()))
+    return CaptureUploadRead(
+        file_url=file_url,
+        storage_provider="local_static",
+        storage_path=str(storage_path),
+        relative_path=relative_path.as_posix(),
+        original_filename=original_name,
+        content_type=upload.content_type,
+    )
 
 
 def _mask_api_key(api_key: str | None) -> str | None:
@@ -196,6 +245,18 @@ def create_recommended_template(
 ) -> ApiResponse[TemplateRead]:
     template = AdminService(session).create_recommended_template(current_admin, payload)
     return ApiResponse(data=TemplateRead.model_validate(template))
+
+
+@router.post("/templates/recommended/upload-image", response_model=ApiResponse[CaptureUploadRead])
+def upload_recommended_template_image(
+    request: Request,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+) -> ApiResponse[CaptureUploadRead]:
+    if not _is_supported_image_upload(file):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image uploads are supported")
+    upload_data = _store_template_upload(request, current_admin, file)
+    return ApiResponse(message="template image uploaded", data=upload_data)
 
 
 @router.put("/templates/recommended/{template_id}", response_model=ApiResponse[TemplateRead])

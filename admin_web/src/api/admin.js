@@ -115,6 +115,21 @@ export async function createRecommendedTemplate(payload) {
   }
 }
 
+export async function uploadRecommendedTemplateImage(file) {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await http.post("/admin/templates/recommended/upload-image", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+    return response.data.data;
+  } catch (error) {
+    rewordTemplateError(error);
+  }
+}
+
 export async function updateRecommendedTemplate(templateId, payload) {
   try {
     const response = await http.put(`/admin/templates/recommended/${templateId}`, payload);

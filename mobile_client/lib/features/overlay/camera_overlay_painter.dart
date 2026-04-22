@@ -4,6 +4,25 @@ import '../../models/normalized_geometry.dart';
 import 'overlay_scene.dart';
 
 class CameraOverlayPainter extends CustomPainter {
+  static const List<List<int>> _liveSkeletonEdges = <List<int>>[
+    <int>[0, 1],
+    <int>[0, 2],
+    <int>[1, 2],
+    <int>[1, 3],
+    <int>[2, 4],
+    <int>[3, 5],
+    <int>[4, 6],
+    <int>[1, 7],
+    <int>[2, 8],
+    <int>[7, 8],
+    <int>[7, 9],
+    <int>[8, 10],
+    <int>[9, 11],
+    <int>[10, 12],
+    <int>[11, 13],
+    <int>[12, 14],
+  ];
+
   const CameraOverlayPainter({
     required this.scene,
     required this.settings,
@@ -43,6 +62,9 @@ class CameraOverlayPainter extends CustomPainter {
   }
 
   void _paintBodyBox(Canvas canvas, Size size) {
+    if (!scene.hasBodyBox) {
+      return;
+    }
     final rectPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.6
@@ -61,7 +83,7 @@ class CameraOverlayPainter extends CustomPainter {
   }
 
   void _paintSkeleton(Canvas canvas, Size size) {
-    if (scene.skeletonPoints.length < 11) {
+    if (!scene.hasSkeleton) {
       return;
     }
 
@@ -80,21 +102,11 @@ class CameraOverlayPainter extends CustomPainter {
               _offsetFromPoint(point, size, mirrored: mirrorDynamicOverlays),
         )
         .toList(growable: false);
-    const skeletonEdges = <List<int>>[
-      <int>[0, 1],
-      <int>[0, 2],
-      <int>[1, 3],
-      <int>[2, 4],
-      <int>[1, 5],
-      <int>[2, 6],
-      <int>[5, 6],
-      <int>[5, 7],
-      <int>[6, 8],
-      <int>[7, 9],
-      <int>[8, 10],
-    ];
 
-    for (final edge in skeletonEdges) {
+    for (final edge in _liveSkeletonEdges) {
+      if (edge[0] >= points.length || edge[1] >= points.length) {
+        continue;
+      }
       canvas.drawLine(points[edge[0]], points[edge[1]], segmentPaint);
     }
     for (final point in points) {
