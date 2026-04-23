@@ -14,6 +14,7 @@ uvicorn device_runtime.api.app:app --reload --host 0.0.0.0 --port 8001
 
 - 打开本地设备会话。
 - 使用 OpenCV 读取摄像头或视频流。
+- 接收手机端推送的 WebSocket 视频帧作为 `mobile_push` 视频源。
 - 使用 MediaPipe、可选 YOLO 或 OpenCV HOG 做人体/姿态检测。
 - 在 `MANUAL`、`AUTO_TRACK`、`SMART_COMPOSE` 模式下管理跟踪和构图。
 - 通过 TTL 总线舵机或 mock 驱动控制云台。
@@ -74,11 +75,38 @@ uvicorn device_runtime.api.app:app --host 0.0.0.0 --port 8001
 3. YOLO 不可用时使用 MediaPipe。
 4. MediaPipe 不可用时退到 OpenCV HOG。
 
+`websockets` 是手机画面推送必需依赖，用于让 `uvicorn` 正常处理 `/api/device/stream/mobile-ws` 握手。
+
 确实要启用 YOLO 时，先确认 CPU 版 torch 可导入，再手动安装 `ultralytics --no-deps` 并设置：
 
 ```bash
 export DEVICE_ENABLE_YOLO=1
 ```
+
+## 手机画面推送
+
+手机端设备联动页开启“手机画面推送”后，会通过 WebSocket 推送 Android NV21 视频帧到：
+
+```text
+WS /api/device/stream/mobile-ws
+```
+
+App 预览窗口会同时连接实时预览下行：
+
+```text
+WS /api/device/preview-ws
+```
+
+设备会话需要使用：
+
+```json
+{"stream_url": "mobile_push"}
+```
+
+该能力会复用现有检测、预览和云台控制链路，适合树莓派联调和演示。`POST /api/device/stream/frame` 和 `GET /api/device/preview.jpg` 仍保留为回退调试接口，但移动端主路径已改为 WebSocket 连续帧。
+Android 端会在推流配置中上报 `rotation_degrees`，设备端会统一校正画面方向。
+
+如果日志出现 `Unsupported upgrade request` 或 `No supported WebSocket library detected`，说明树莓派虚拟环境没有装到 `websockets`。重新执行 `python -m pip install -r device_runtime/requirements.txt` 后重启服务。
 
 ## 主要 API
 
@@ -86,6 +114,9 @@ export DEVICE_ENABLE_YOLO=1
 - `POST /api/device/session/close`
 - `GET /api/device/status`
 - `GET /api/device/preview.jpg`
+- `WS /api/device/preview-ws`
+- `WS /api/device/stream/mobile-ws`
+- `POST /api/device/stream/frame`
 - `POST /api/device/control/manual-move`
 - `POST /api/device/control/mode`
 - `POST /api/device/control/home`

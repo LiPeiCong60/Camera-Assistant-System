@@ -98,10 +98,10 @@ class ControlService:
         """手动移动云台"""
         normalized = action.strip().lower()
         if normalized in {"w", "up"}:
-            self._gimbal.move_relative(0.0, self._manual_step_deg)
+            self._gimbal.move_relative(0.0, -self._manual_step_deg)
             return
         if normalized in {"s", "down"}:
-            self._gimbal.move_relative(0.0, -self._manual_step_deg)
+            self._gimbal.move_relative(0.0, self._manual_step_deg)
             return
         if normalized in {"a", "left"}:
             self._gimbal.move_relative(-self._manual_step_deg, 0.0)

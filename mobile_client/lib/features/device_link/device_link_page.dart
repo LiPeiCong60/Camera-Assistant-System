@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -42,6 +45,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   static const String _prefsAutoRefreshKey = 'device_link.auto_refresh';
   static const String _prefsRecentConnectionsKey =
       'device_link.recent_connections';
+  static const String _mobilePushStreamUrl = 'mobile_push';
+  static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 50);
+  static const Duration _manualMoveRepeatInterval = Duration(milliseconds: 110);
+  static const Duration _mobilePushSocketTimeout = Duration(seconds: 8);
   static const List<String> _modes = <String>[
     'MANUAL',
     'AUTO_TRACK',
@@ -71,6 +78,26 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   DateTime? _lastStatusUpdatedAt;
   Timer? _pollTimer;
   Timer? _persistTimer;
+  Timer? _manualMoveRepeatTimer;
+  bool _isManualMoveSending = false;
+  String? _activeManualMoveAction;
+  WebSocket? _previewSocket;
+  Uint8List? _latestPreviewFrameBytes;
+  DateTime? _latestPreviewFrameAt;
+  String? _previewStreamErrorMessage;
+  WebSocket? _mobilePushSocket;
+  CameraController? _mobilePushCameraController;
+  List<CameraDescription> _mobilePushCameras = const <CameraDescription>[];
+  int _mobilePushRotationDegrees = 0;
+  bool _isMobilePushEnabled = false;
+  bool _isStartingMobilePush = false;
+  bool _isPushingMobileFrame = false;
+  bool _mobilePushConfigSent = false;
+  int _mobilePushFrameCount = 0;
+  int _lastMobilePushFrameSentAtMs = 0;
+  int _lastMobilePushUiUpdateAtMs = 0;
+  DateTime? _lastMobilePushFrameAt;
+  String? _mobilePushErrorMessage;
   final List<_DeviceActionRecord> _actionRecords = <_DeviceActionRecord>[];
   final List<_DeviceCaptureRecord> _captureRecords = <_DeviceCaptureRecord>[];
   List<_DeviceConnectionPreset> _recentConnections =
@@ -83,7 +110,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       text: AppConfig.deviceApiBaseUrl,
     );
     _streamUrlController = TextEditingController(
-      text: 'rtsp://example.invalid/live',
+      text: _mobilePushStreamUrl,
     );
     _sessionCodeController = TextEditingController(
       text: widget.initialSessionCode ?? _buildSessionCode(),
@@ -97,6 +124,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   @override
   void dispose() {
+    unawaited(_stopMobilePush(silent: true));
+    unawaited(_stopPreviewStream());
+    _stopManualMoveRepeat(refreshStatus: false);
     _pollTimer?.cancel();
     _persistTimer?.cancel();
     _baseUrlController.removeListener(_scheduleDraftPersist);
@@ -440,6 +470,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
+      unawaited(_startPreviewStream());
       await _rememberCurrentConnection();
       await _refreshStatusSilently();
       await _refreshHealthSilently();
@@ -448,12 +479,17 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   Future<void> _closeSession() async {
     await _runAction(() async {
+      await _stopMobilePush(silent: true);
+      await _stopPreviewStream();
       await _deviceApiService.closeSession(
         baseUrl: _baseUrlController.text,
         sessionCode: _status?.sessionCode ?? _sessionCodeController.text.trim(),
       );
       setState(() {
         _status = null;
+        _latestPreviewFrameBytes = null;
+        _latestPreviewFrameAt = null;
+        _previewStreamErrorMessage = null;
         _lastCapturePath = null;
         _lastBackendAiTask = null;
         _lastStatusUpdatedAt = null;
@@ -463,17 +499,401 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     }, successMessage: '设备会话已关闭。');
   }
 
-  Future<void> _manualMove(String action) async {
+  Future<void> _startMobilePush() async {
+    if (_isStartingMobilePush || _isMobilePushEnabled) {
+      return;
+    }
+
     await _runAction(() async {
-      final status = await _deviceApiService.manualMove(
+      setState(() {
+        _isStartingMobilePush = true;
+        _mobilePushErrorMessage = null;
+      });
+
+      try {
+        if (!Platform.isAndroid) {
+          throw const ApiException('手机画面推送当前优先支持 Android / 安卓模拟器。');
+        }
+        if (_mobilePushCameras.isEmpty) {
+          _mobilePushCameras = await availableCameras();
+        }
+        if (_mobilePushCameras.isEmpty) {
+          throw const ApiException('当前设备没有可用摄像头，无法推送画面。');
+        }
+
+        final camera = _mobilePushCameras.firstWhere(
+          (item) => item.lensDirection == CameraLensDirection.back,
+          orElse: () => _mobilePushCameras.first,
+        );
+        _mobilePushRotationDegrees = camera.sensorOrientation;
+        final controller = CameraController(
+          camera,
+          ResolutionPreset.low,
+          enableAudio: false,
+          imageFormatGroup: ImageFormatGroup.nv21,
+        );
+        await controller.initialize();
+        _mobilePushCameraController = controller;
+
+        _streamUrlController.text = _mobilePushStreamUrl;
+        final status = await _deviceApiService.openSession(
+          baseUrl: _baseUrlController.text,
+          sessionCode: _sessionCodeController.text.trim(),
+          streamUrl: _mobilePushStreamUrl,
+        );
+        setState(() {
+          _status = status;
+          _lastStatusUpdatedAt = DateTime.now();
+          _isMobilePushEnabled = true;
+          _mobilePushFrameCount = 0;
+          _lastMobilePushFrameSentAtMs = 0;
+          _lastMobilePushUiUpdateAtMs = 0;
+          _lastMobilePushFrameAt = null;
+        });
+        await _rememberCurrentConnection();
+        unawaited(_startPreviewStream());
+        _mobilePushSocket = await WebSocket.connect(
+          _buildDeviceWebSocketUri('/api/device/stream/mobile-ws').toString(),
+        ).timeout(_mobilePushSocketTimeout);
+        _mobilePushSocket!.listen(
+          (_) {},
+          onError: (_) {
+            if (_isMobilePushEnabled) {
+              _setMobilePushError('手机画面推送连接异常，请检查树莓派地址与网络。');
+            }
+          },
+          onDone: () {
+            if (_isMobilePushEnabled) {
+              _setMobilePushError('手机画面推送连接已断开。');
+            }
+          },
+          cancelOnError: false,
+        );
+        await controller.startImageStream(_handleMobilePushFrame);
+      } catch (_) {
+        await _stopMobilePush(silent: true);
+        rethrow;
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isStartingMobilePush = false;
+          });
+        }
+      }
+    }, successMessage: '手机画面推送已启动。');
+  }
+
+  Future<void> _stopMobilePush({bool silent = false}) async {
+    _isMobilePushEnabled = false;
+    _isPushingMobileFrame = false;
+    _mobilePushConfigSent = false;
+    _lastMobilePushFrameSentAtMs = 0;
+    _lastMobilePushUiUpdateAtMs = 0;
+
+    final socket = _mobilePushSocket;
+    _mobilePushSocket = null;
+    if (socket != null) {
+      try {
+        await socket.close();
+      } catch (_) {
+        // Ignore socket shutdown errors while leaving the page.
+      }
+    }
+
+    final controller = _mobilePushCameraController;
+    _mobilePushCameraController = null;
+    if (controller != null) {
+      try {
+        if (controller.value.isStreamingImages) {
+          await controller.stopImageStream();
+        }
+        await controller.dispose();
+      } catch (_) {
+        // Ignore camera shutdown errors while leaving the page.
+      }
+    }
+
+    if (!silent && mounted) {
+      setState(() {
+        _syncMessage = '手机画面推送已停止。';
+        _addActionRecord('system', '手机画面推送已停止。');
+      });
+    }
+  }
+
+  void _handleMobilePushFrame(CameraImage image) {
+    final socket = _mobilePushSocket;
+    if (!_isMobilePushEnabled ||
+        _isPushingMobileFrame ||
+        socket == null ||
+        socket.readyState != WebSocket.open ||
+        image.planes.isEmpty) {
+      return;
+    }
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastMobilePushFrameSentAtMs <
+        _mobilePushFrameThrottle.inMilliseconds) {
+      return;
+    }
+
+    try {
+      _isPushingMobileFrame = true;
+      if (!_mobilePushConfigSent) {
+        socket.add(
+          jsonEncode(<String, dynamic>{
+            'type': 'config',
+            'format': 'nv21',
+            'width': image.width,
+            'height': image.height,
+            'rotation_degrees': _mobilePushRotationDegrees,
+          }),
+        );
+        _mobilePushConfigSent = true;
+      }
+      final frameBytes = _encodeCameraImageAsNv21(image);
+      if (frameBytes == null) {
+        _setMobilePushError('当前相机帧格式暂不支持，请确认使用 Android 摄像头。');
+        return;
+      }
+      socket.add(frameBytes);
+      _lastMobilePushFrameSentAtMs = nowMs;
+      _mobilePushFrameCount += 1;
+
+      final shouldUpdateUi =
+          nowMs - _lastMobilePushUiUpdateAtMs >=
+          const Duration(milliseconds: 300).inMilliseconds;
+      if (mounted && shouldUpdateUi) {
+        setState(() {
+          _lastMobilePushFrameAt = DateTime.now();
+          _lastMobilePushUiUpdateAtMs = nowMs;
+          _mobilePushErrorMessage = null;
+        });
+      }
+    } on ApiException catch (error) {
+      _setMobilePushError(error.message);
+    } catch (_) {
+      _setMobilePushError('手机画面推送失败，请检查摄像头权限与设备网络。');
+    } finally {
+      _isPushingMobileFrame = false;
+    }
+  }
+
+  Uint8List? _encodeCameraImageAsNv21(CameraImage image) {
+    final expectedSize = image.width * image.height * 3 ~/ 2;
+    if (image.planes.length == 1 &&
+        image.planes.first.bytes.length == expectedSize) {
+      return image.planes.first.bytes;
+    }
+    if (image.planes.length < 3) {
+      return null;
+    }
+
+    final yPlane = image.planes[0];
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+    final output = Uint8List(expectedSize);
+    var offset = 0;
+
+    for (var row = 0; row < image.height; row += 1) {
+      final rowStart = row * yPlane.bytesPerRow;
+      final yPixelStride = yPlane.bytesPerPixel ?? 1;
+      if (yPixelStride == 1) {
+        final rowEnd = rowStart + image.width;
+        if (rowEnd > yPlane.bytes.length) {
+          return null;
+        }
+        output.setRange(offset, offset + image.width, yPlane.bytes, rowStart);
+        offset += image.width;
+        continue;
+      }
+      for (var col = 0; col < image.width; col += 1) {
+        final index = rowStart + col * yPixelStride;
+        if (index >= yPlane.bytes.length) {
+          return null;
+        }
+        output[offset] = yPlane.bytes[index];
+        offset += 1;
+      }
+    }
+
+    final uvWidth = image.width ~/ 2;
+    final uvHeight = image.height ~/ 2;
+    final uPixelStride = uPlane.bytesPerPixel ?? 1;
+    final vPixelStride = vPlane.bytesPerPixel ?? 1;
+    for (var row = 0; row < uvHeight; row += 1) {
+      final uRowStart = row * uPlane.bytesPerRow;
+      final vRowStart = row * vPlane.bytesPerRow;
+      for (var col = 0; col < uvWidth; col += 1) {
+        final uIndex = uRowStart + col * uPixelStride;
+        final vIndex = vRowStart + col * vPixelStride;
+        if (uIndex >= uPlane.bytes.length || vIndex >= vPlane.bytes.length) {
+          return null;
+        }
+        output[offset] = vPlane.bytes[vIndex];
+        output[offset + 1] = uPlane.bytes[uIndex];
+        offset += 2;
+      }
+    }
+
+    return output;
+  }
+
+  Uri _buildDeviceWebSocketUri(String path) {
+    final rawBaseUrl = _baseUrlController.text.trim();
+    final normalizedBaseUrl = rawBaseUrl.endsWith('/')
+        ? rawBaseUrl.substring(0, rawBaseUrl.length - 1)
+        : rawBaseUrl;
+    final withoutApi = normalizedBaseUrl.endsWith('/api')
+        ? normalizedBaseUrl.substring(0, normalizedBaseUrl.length - 4)
+        : normalizedBaseUrl;
+    final uri = Uri.parse(withoutApi);
+    final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
+    final basePath = uri.path.endsWith('/')
+        ? uri.path.substring(0, uri.path.length - 1)
+        : uri.path;
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    return uri.replace(
+      scheme: scheme,
+      path: '$basePath$normalizedPath',
+    );
+  }
+
+  void _setMobilePushError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _mobilePushErrorMessage = message;
+    });
+  }
+
+  Future<void> _startPreviewStream() async {
+    if (_previewSocket != null || _status?.sessionOpened != true) {
+      return;
+    }
+
+    try {
+      final socket = await WebSocket.connect(
+        _buildDeviceWebSocketUri('/api/device/preview-ws').toString(),
+      ).timeout(_mobilePushSocketTimeout);
+      _previewSocket = socket;
+      socket.listen(
+        (dynamic data) {
+          if (!mounted || data is! List<int>) {
+            return;
+          }
+          setState(() {
+            _latestPreviewFrameBytes = Uint8List.fromList(data);
+            _latestPreviewFrameAt = DateTime.now();
+            _previewStreamErrorMessage = null;
+          });
+        },
+        onError: (_) {
+          _previewSocket = null;
+          if (mounted) {
+            setState(() {
+              _previewStreamErrorMessage = '实时预览连接异常，已回退到静态预览。';
+            });
+          }
+        },
+        onDone: () {
+          _previewSocket = null;
+        },
+        cancelOnError: false,
+      );
+    } catch (_) {
+      _previewSocket = null;
+      if (mounted) {
+        setState(() {
+          _previewStreamErrorMessage = '实时预览连接失败，已回退到静态预览。';
+        });
+      }
+    }
+  }
+
+  Future<void> _stopPreviewStream() async {
+    final socket = _previewSocket;
+    _previewSocket = null;
+    if (socket == null) {
+      return;
+    }
+    try {
+      await socket.close();
+    } catch (_) {
+      // Ignore preview socket shutdown errors while leaving the page.
+    }
+  }
+
+  void _startManualMoveRepeat(String action) {
+    if (_status?.sessionOpened != true || _isBusy) {
+      return;
+    }
+    _activeManualMoveAction = action;
+    _manualMoveRepeatTimer?.cancel();
+    unawaited(_sendManualMovePulse(action));
+    _manualMoveRepeatTimer = Timer.periodic(_manualMoveRepeatInterval, (_) {
+      if (_activeManualMoveAction != action) {
+        return;
+      }
+      unawaited(_sendManualMovePulse(action));
+    });
+  }
+
+  void _stopManualMoveRepeat({bool refreshStatus = true}) {
+    _activeManualMoveAction = null;
+    _manualMoveRepeatTimer?.cancel();
+    _manualMoveRepeatTimer = null;
+    if (refreshStatus) {
+      unawaited(_refreshStatusAfterManualMove());
+    }
+  }
+
+  Future<void> _refreshStatusAfterManualMove() async {
+    try {
+      await _refreshStatusSilently();
+    } catch (_) {
+      // Manual repeat should stop cleanly even if the status refresh is late.
+    }
+  }
+
+  Future<void> _sendManualMovePulse(
+    String action, {
+    bool refreshStatus = false,
+  }) async {
+    if (_isManualMoveSending || _status?.sessionOpened != true) {
+      return;
+    }
+    _isManualMoveSending = true;
+    try {
+      await _deviceApiService.sendManualMoveCommand(
         baseUrl: _baseUrlController.text,
         action: action,
       );
+      if (refreshStatus) {
+        await _refreshStatusSilently();
+      }
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
       setState(() {
-        _status = status;
-        _lastStatusUpdatedAt = DateTime.now();
+        _errorMessage = error.message;
+        _addActionRecord('error', error.message);
       });
-    }, successMessage: '手动移动已执行。');
+      _stopManualMoveRepeat();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '手动控制发送失败，请检查设备连接。';
+        _addActionRecord('error', '手动控制发送失败，请检查设备连接。');
+      });
+      _stopManualMoveRepeat();
+    } finally {
+      _isManualMoveSending = false;
+    }
   }
 
   Future<void> _setMode(String mode) async {
@@ -722,6 +1142,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       _status = status;
       _lastStatusUpdatedAt = DateTime.now();
     });
+    if (status.sessionOpened) {
+      unawaited(_startPreviewStream());
+    }
   }
 
   Future<void> _refreshHealthSilently() async {
@@ -779,6 +1202,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     if (updatedAt == null) {
       return '-';
     }
+    return _formatClock(updatedAt);
+  }
+
+  String _formatClock(DateTime value) {
+    final updatedAt = value;
     final hh = updatedAt.hour.toString().padLeft(2, '0');
     final mm = updatedAt.minute.toString().padLeft(2, '0');
     final ss = updatedAt.second.toString().padLeft(2, '0');
@@ -839,39 +1267,46 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       ? Stack(
                           fit: StackFit.expand,
                           children: <Widget>[
-                            Image.network(
-                              _buildPreviewUrl(),
-                              fit: BoxFit.cover,
-                              gaplessPlayback: true,
-                              loadingBuilder:
-                                  (
-                                    BuildContext context,
-                                    Widget child,
-                                    ImageChunkEvent? progress,
-                                  ) {
-                                    if (progress == null) {
-                                      return child;
-                                    }
-                                    return const _PreviewEmptyState(
-                                      icon: Icons.camera_outdoor_outlined,
-                                      title: '正在加载设备画面',
-                                      description: '已打开设备会话，正在尝试拉取最新预览帧。',
-                                    );
-                                  },
-                              errorBuilder:
-                                  (
-                                    BuildContext context,
-                                    Object error,
-                                    StackTrace? stackTrace,
-                                  ) {
-                                    return const _PreviewEmptyState(
-                                      icon: Icons.wifi_tethering_error_rounded,
-                                      title: '暂时无法显示设备画面',
-                                      description:
-                                          '预览帧拉取失败。请确认设备会话已打开，并检查设备地址与视频流地址是否可用。',
-                                    );
-                                  },
-                            ),
+                            if (_latestPreviewFrameBytes != null)
+                              Image.memory(
+                                _latestPreviewFrameBytes!,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                              )
+                            else
+                              Image.network(
+                                _buildPreviewUrl(),
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                loadingBuilder:
+                                    (
+                                      BuildContext context,
+                                      Widget child,
+                                      ImageChunkEvent? progress,
+                                    ) {
+                                      if (progress == null) {
+                                        return child;
+                                      }
+                                      return const _PreviewEmptyState(
+                                        icon: Icons.camera_outdoor_outlined,
+                                        title: '正在加载设备画面',
+                                        description: '已打开设备会话，正在尝试连接实时预览。',
+                                      );
+                                    },
+                                errorBuilder:
+                                    (
+                                      BuildContext context,
+                                      Object error,
+                                      StackTrace? stackTrace,
+                                    ) {
+                                      return const _PreviewEmptyState(
+                                        icon: Icons.wifi_tethering_error_rounded,
+                                        title: '暂时无法显示设备画面',
+                                        description:
+                                            '实时预览或静态预览暂不可用。请确认设备会话已打开，并检查手机画面推送是否正在运行。',
+                                      );
+                                    },
+                              ),
                             Positioned(
                               left: 14,
                               top: 14,
@@ -884,8 +1319,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                                   color: Colors.black.withValues(alpha: 0.62),
                                   borderRadius: BorderRadius.circular(999),
                                 ),
-                                child: const Text(
-                                  '最新预览帧',
+                                child: Text(
+                                  _latestPreviewFrameAt == null
+                                      ? '静态预览'
+                                      : '实时预览 ${_formatClock(_latestPreviewFrameAt!)}',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
@@ -910,6 +1347,16 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 context,
               ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6A6258)),
             ),
+            if (_previewStreamErrorMessage != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _previewStreamErrorMessage!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFB9442F),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1285,6 +1732,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           const SizedBox(height: 18),
           _buildSessionActionsSection(context),
           const SizedBox(height: 14),
+          _buildMobilePushSection(context),
+          const SizedBox(height: 14),
           _buildStatusOverviewSection(context),
         ],
       ),
@@ -1367,7 +1816,85 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
   }
 
+  Widget _buildMobilePushSection(BuildContext context) {
+    final theme = Theme.of(context);
+    final lastFrame = _lastMobilePushFrameAt == null
+        ? '-'
+        : _formatClock(_lastMobilePushFrameAt!);
+    final description = _isMobilePushEnabled
+        ? '已推送 $_mobilePushFrameCount 帧，最近一帧 $lastFrame。'
+        : '使用当前 Android 摄像头向树莓派推送 WebSocket 视频帧，树莓派会以 mobile_push 作为视频源。';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F5EE),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE1D8CA)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(
+                  _isMobilePushEnabled
+                      ? Icons.videocam_outlined
+                      : Icons.mobile_screen_share_outlined,
+                  color: _isMobilePushEnabled
+                      ? const Color(0xFF0F8F6D)
+                      : const Color(0xFF6E6558),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '手机画面推送',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Switch(
+                  value: _isMobilePushEnabled,
+                  onChanged: _isBusy || _isStartingMobilePush
+                      ? null
+                      : (bool value) {
+                          if (value) {
+                            unawaited(_startMobilePush());
+                          } else {
+                            unawaited(_stopMobilePush());
+                          }
+                        },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF6E6558),
+                height: 1.35,
+              ),
+            ),
+            if (_mobilePushErrorMessage != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Text(
+                _mobilePushErrorMessage!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFFB9442F),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildDirectionControlsSection(BuildContext context) {
+    final canManualMove = _status?.sessionOpened == true && !_isBusy;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1381,19 +1908,23 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         Center(
           child: Column(
             children: <Widget>[
-              FilledButton.tonalIcon(
-                onPressed: _isBusy ? null : () => _manualMove('up'),
+              _ManualMoveHoldButton(
+                enabled: canManualMove,
+                onStart: () => _startManualMoveRepeat('up'),
+                onStop: _stopManualMoveRepeat,
                 icon: const Icon(Icons.keyboard_arrow_up),
-                label: const Text('上移'),
+                label: '上移',
               ),
               const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: <Widget>[
-                  FilledButton.tonalIcon(
-                    onPressed: _isBusy ? null : () => _manualMove('left'),
+                  _ManualMoveHoldButton(
+                    enabled: canManualMove,
+                    onStart: () => _startManualMoveRepeat('left'),
+                    onStop: _stopManualMoveRepeat,
                     icon: const Icon(Icons.keyboard_arrow_left),
-                    label: const Text('左移'),
+                    label: '左移',
                   ),
                   const SizedBox(width: 10),
                   OutlinedButton.icon(
@@ -1402,18 +1933,22 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                     label: const Text('回中'),
                   ),
                   const SizedBox(width: 10),
-                  FilledButton.tonalIcon(
-                    onPressed: _isBusy ? null : () => _manualMove('right'),
+                  _ManualMoveHoldButton(
+                    enabled: canManualMove,
+                    onStart: () => _startManualMoveRepeat('right'),
+                    onStop: _stopManualMoveRepeat,
                     icon: const Icon(Icons.keyboard_arrow_right),
-                    label: const Text('右移'),
+                    label: '右移',
                   ),
                 ],
               ),
               const SizedBox(height: 10),
-              FilledButton.tonalIcon(
-                onPressed: _isBusy ? null : () => _manualMove('down'),
+              _ManualMoveHoldButton(
+                enabled: canManualMove,
+                onStart: () => _startManualMoveRepeat('down'),
+                onStop: _stopManualMoveRepeat,
                 icon: const Icon(Icons.keyboard_arrow_down),
-                label: const Text('下移'),
+                label: '下移',
               ),
             ],
           ),
@@ -2104,6 +2639,36 @@ class _InputBlock extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ManualMoveHoldButton extends StatelessWidget {
+  const _ManualMoveHoldButton({
+    required this.enabled,
+    required this.onStart,
+    required this.onStop,
+    required this.icon,
+    required this.label,
+  });
+
+  final bool enabled;
+  final VoidCallback onStart;
+  final VoidCallback onStop;
+  final Widget icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: enabled ? (_) => onStart() : null,
+      onPointerUp: enabled ? (_) => onStop() : null,
+      onPointerCancel: enabled ? (_) => onStop() : null,
+      child: FilledButton.tonalIcon(
+        onPressed: enabled ? () {} : null,
+        icon: icon,
+        label: Text(label),
+      ),
     );
   }
 }

@@ -68,6 +68,21 @@ class DeviceApiService {
     double? panDelta,
     double? tiltDelta,
   }) async {
+    await sendManualMoveCommand(
+      baseUrl: baseUrl,
+      action: action,
+      panDelta: panDelta,
+      tiltDelta: tiltDelta,
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<void> sendManualMoveCommand({
+    required String baseUrl,
+    String? action,
+    double? panDelta,
+    double? tiltDelta,
+  }) async {
     await _postJson(
       baseUrl,
       '/api/device/control/manual-move',
@@ -77,7 +92,6 @@ class DeviceApiService {
         'tilt_delta': tiltDelta,
       },
     );
-    return getStatus(baseUrl: baseUrl);
   }
 
   Future<DeviceStatusSummary> setMode({
@@ -165,6 +179,30 @@ class DeviceApiService {
       <String, dynamic>{'reason': reason},
     );
     return data['capture_path'] as String? ?? '';
+  }
+
+  Future<void> pushMobileFrame({
+    required String baseUrl,
+    required File file,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${_normalizeBaseUrl(baseUrl)}/api/device/stream/frame'),
+    );
+    request.headers['Accept'] = 'application/json';
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: 'mobile_frame.jpg',
+      ),
+    );
+
+    final response = await _send(() async {
+      final streamed = await request.send();
+      return http.Response.fromStream(streamed);
+    });
+    _decodeEnvelope(response);
   }
 
   Future<Map<String, dynamic>> _getJson(String baseUrl, String path) async {

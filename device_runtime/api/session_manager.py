@@ -31,7 +31,7 @@ from device_runtime.services.template_service import TemplateService
 from device_runtime.repositories.local_template_repository import LocalTemplateRepository
 from device_runtime.templates.template_compose import TemplateLibrary, TemplateProfile
 from device_runtime.vision.detector import AsyncDetector, build_runtime_detector
-from device_runtime.vision.video_source import OpenCVVideoSource
+from device_runtime.vision.video_source import build_video_source
 
 
 @dataclass(slots=True)
@@ -168,7 +168,7 @@ class DeviceSessionContext:
             runtime_state=self.runtime_state,
         )
 
-        self.source = OpenCVVideoSource(self.config.video)
+        self.source = build_video_source(self.config.video)
         self._async_detector: AsyncDetector | None = None
         self._frame_processor: FrameProcessor | None = None
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
@@ -210,7 +210,7 @@ class DeviceSessionContext:
 
         self.stream_url = stream_url
         self.config = default_config(stream_url)
-        self.source = OpenCVVideoSource(self.config.video)
+        self.source = build_video_source(self.config.video)
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
         self._last_submit_ts = 0.0
         self.runtime_state.last_runtime_error = None
@@ -400,14 +400,19 @@ class DeviceSessionContext:
             auto_analyze=False,
         )
 
-    def get_preview_jpeg_bytes(self) -> bytes:
+    def get_preview_jpeg_bytes(self, *, quality: int = 75) -> bytes:
         frame = self.runtime_state.latest_frame
         if frame is None:
             frame = self._acquire_frame_for_capture()
         if frame is None:
             raise ValueError("no frame available for preview")
 
-        success, encoded = cv2.imencode(".jpg", frame)
+        normalized_quality = max(35, min(95, int(quality)))
+        success, encoded = cv2.imencode(
+            ".jpg",
+            frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), normalized_quality],
+        )
         if not success:
             raise ValueError("failed to encode preview frame")
         return encoded.tobytes()

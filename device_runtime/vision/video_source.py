@@ -11,6 +11,36 @@ import numpy as np
 
 from device_runtime.config import VideoSourceConfig
 
+MOBILE_PUSH_STREAM_URL = "mobile_push"
+
+
+class MobilePushFrameStore:
+    """Thread-safe latest-frame store for frames pushed by the mobile client."""
+
+    def __init__(self) -> None:
+        self._frame: np.ndarray | None = None
+        self._updated_at: float | None = None
+        self._lock = threading.Lock()
+
+    def set_frame(self, frame: np.ndarray) -> None:
+        with self._lock:
+            self._frame = frame.copy()
+            self._updated_at = time.time()
+
+    def read_frame(self) -> tuple[np.ndarray | None, float | None]:
+        with self._lock:
+            if self._frame is None:
+                return None, self._updated_at
+            return self._frame.copy(), self._updated_at
+
+    def clear(self) -> None:
+        with self._lock:
+            self._frame = None
+            self._updated_at = None
+
+
+mobile_push_frame_store = MobilePushFrameStore()
+
 
 class VideoSource(ABC):
     @abstractmethod
@@ -127,3 +157,28 @@ class OpenCVVideoSource(VideoSource):
                 continue
             with self._frame_lock:
                 self._latest_frame = frame
+
+
+class MobilePushVideoSource(VideoSource):
+    """Video source backed by JPEG frames uploaded from the mobile client."""
+
+    def __init__(self, store: MobilePushFrameStore = mobile_push_frame_store) -> None:
+        self._store = store
+        self._logger = logging.getLogger(self.__class__.__name__)
+
+    def start(self) -> None:
+        self._store.clear()
+        self._logger.info("mobile push video source opened")
+
+    def read(self) -> Optional[np.ndarray]:
+        frame, _ = self._store.read_frame()
+        return frame
+
+    def stop(self) -> None:
+        return
+
+
+def build_video_source(config: VideoSourceConfig) -> VideoSource:
+    if config.stream_url.strip().lower() == MOBILE_PUSH_STREAM_URL:
+        return MobilePushVideoSource()
+    return OpenCVVideoSource(config)

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import asyncio
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 
 from device_runtime.api.dependencies import require_session
 from device_runtime.api.session_manager import session_manager
 
 router = APIRouter(tags=["device-status"])
+
+PREVIEW_WS_INTERVAL_S = 1.0 / 20.0
 
 
 @router.get("/api/device/health")
@@ -41,9 +45,37 @@ def get_status() -> dict:
 @router.get("/api/device/preview.jpg")
 def get_preview_frame() -> Response:
     session = require_session()
-    jpeg_bytes = session.get_preview_jpeg_bytes()
+    try:
+        jpeg_bytes = session.get_preview_jpeg_bytes()
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return Response(
         content=jpeg_bytes,
         media_type="image/jpeg",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
+
+
+@router.websocket("/api/device/preview-ws")
+async def preview_stream(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        session = require_session()
+    except HTTPException as exc:
+        await websocket.close(code=1008, reason=str(exc.detail))
+        return
+
+    try:
+        while True:
+            try:
+                jpeg_bytes = await asyncio.to_thread(
+                    session.get_preview_jpeg_bytes,
+                    quality=65,
+                )
+            except ValueError:
+                await asyncio.sleep(PREVIEW_WS_INTERVAL_S)
+                continue
+            await websocket.send_bytes(jpeg_bytes)
+            await asyncio.sleep(PREVIEW_WS_INTERVAL_S)
+    except WebSocketDisconnect:
+        return
