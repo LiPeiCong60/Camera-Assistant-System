@@ -18,6 +18,7 @@ const editingConfigId = ref(null);
 const configs = ref([]);
 
 const vendorOptions = [
+  { label: "Ollama", value: "ollama" },
   { label: "LongCat", value: "longcat" },
   { label: "OpenAI", value: "openai" },
   { label: "阿里云百炼 / DashScope", value: "dashscope" },

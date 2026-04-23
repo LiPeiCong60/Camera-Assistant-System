@@ -9,18 +9,16 @@ class CameraOverlayPainter extends CustomPainter {
     <int>[0, 2],
     <int>[1, 2],
     <int>[1, 3],
-    <int>[2, 4],
     <int>[3, 5],
+    <int>[2, 4],
     <int>[4, 6],
     <int>[1, 7],
     <int>[2, 8],
     <int>[7, 8],
     <int>[7, 9],
-    <int>[8, 10],
     <int>[9, 11],
+    <int>[8, 10],
     <int>[10, 12],
-    <int>[11, 13],
-    <int>[12, 14],
   ];
 
   const CameraOverlayPainter({
@@ -70,12 +68,18 @@ class CameraOverlayPainter extends CustomPainter {
       ..strokeWidth = 2.6
       ..color = const Color(0xFF00D084);
 
-    final rect = Rect.fromLTWH(
-      _resolveBodyBoxLeft(size),
-      scene.bodyBox.top * size.height,
-      scene.bodyBox.width * size.width,
-      scene.bodyBox.height * size.height,
-    );
+    final left = _resolveBodyBoxLeft(size);
+    final top = _clamp01(scene.bodyBox.top) * size.height;
+    final normalizedRight = mirrorDynamicOverlays
+        ? 1 - scene.bodyBox.left
+        : scene.bodyBox.left + scene.bodyBox.width;
+    final right = _clamp01(normalizedRight) * size.width;
+    final bottom =
+        _clamp01(scene.bodyBox.top + scene.bodyBox.height) * size.height;
+    final rect = Rect.fromLTRB(left, top, right, bottom);
+    if (rect.width <= 0 || rect.height <= 0) {
+      return;
+    }
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(24)),
       rectPaint,
@@ -89,12 +93,10 @@ class CameraOverlayPainter extends CustomPainter {
 
     final segmentPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3
+      ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round
-      ..color = const Color(0xFF42C6FF);
-    final pointPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = const Color(0xFF42C6FF);
+      ..strokeJoin = StrokeJoin.round
+      ..color = const Color(0xFF42C6FF).withValues(alpha: 0.92);
 
     final points = scene.skeletonPoints
         .map(
@@ -109,16 +111,13 @@ class CameraOverlayPainter extends CustomPainter {
       }
       canvas.drawLine(points[edge[0]], points[edge[1]], segmentPaint);
     }
-    for (final point in points) {
-      canvas.drawCircle(point, 4.5, pointPaint);
-    }
   }
 
   double _resolveBodyBoxLeft(Size size) {
     final normalizedLeft = mirrorDynamicOverlays
         ? 1 - scene.bodyBox.left - scene.bodyBox.width
         : scene.bodyBox.left;
-    return normalizedLeft * size.width;
+    return _clamp01(normalizedLeft) * size.width;
   }
 
   Offset _offsetFromPoint(
@@ -126,9 +125,12 @@ class CameraOverlayPainter extends CustomPainter {
     Size size, {
     bool mirrored = false,
   }) {
-    final normalizedX = mirrored ? 1 - point.x : point.x;
-    return Offset(normalizedX * size.width, point.y * size.height);
+    final normalizedX = _clamp01(mirrored ? 1 - point.x : point.x);
+    final normalizedY = _clamp01(point.y);
+    return Offset(normalizedX * size.width, normalizedY * size.height);
   }
+
+  double _clamp01(double value) => value.clamp(0.0, 1.0);
 
   @override
   bool shouldRepaint(covariant CameraOverlayPainter oldDelegate) {

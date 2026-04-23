@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import os
+import platform
 import queue
 import threading
 import urllib.request
@@ -693,6 +696,30 @@ class YoloOnlyVisionDetector(VisionDetector):
         )
 
 
+class OpenCvHogVisionDetector(VisionDetector):
+    """Last-resort detector that avoids torch/ultralytics entirely."""
+
+    def __init__(self) -> None:
+        self._hog = OpenCvHogPersonDetector()
+
+    def detect(self, frame: np.ndarray) -> VisionResult:
+        bbox, conf = self._hog.detect_person_bbox(frame)
+        if bbox is None:
+            return VisionResult()
+        detection = DetectionResult(
+            bbox=bbox,
+            confidence=conf,
+            label="person_hog",
+            anchor_point=bbox.center,
+            pose_landmarks=None,
+        )
+        return VisionResult(
+            tracking_detection=detection,
+            tracking_candidates=[detection],
+            person_bbox=bbox,
+        )
+
+
 class MediaPipeYoloVisionDetector(VisionDetector):
     """
     Combined detector:
@@ -820,22 +847,47 @@ def build_runtime_detector(
 ) -> tuple[VisionDetector, str]:
     """Build the best available runtime detector with graceful fallback."""
 
+    logger = logging.getLogger(__name__)
+    if _should_enable_yolo():
+        try:
+            detector = MediaPipeYoloVisionDetector(
+                config,
+                yolo_model=yolo_model,
+                yolo_conf=yolo_conf,
+                yolo_device=yolo_device,
+            )
+            return detector, "mediapipe_yolo"
+        except Exception as exc:
+            logger.warning("MediaPipe+YOLO detector unavailable: %s", exc)
+        try:
+            detector = YoloOnlyVisionDetector(
+                config,
+                yolo_model=yolo_model,
+                yolo_conf=yolo_conf,
+                yolo_device=yolo_device,
+            )
+            return detector, "yolo_or_hog"
+        except Exception as exc:
+            logger.warning("YOLO detector unavailable: %s", exc)
+
     try:
-        detector = MediaPipeYoloVisionDetector(
-            config,
-            yolo_model=yolo_model,
-            yolo_conf=yolo_conf,
-            yolo_device=yolo_device,
-        )
-        return detector, "mediapipe_yolo"
-    except Exception:
-        detector = YoloOnlyVisionDetector(
-            config,
-            yolo_model=yolo_model,
-            yolo_conf=yolo_conf,
-            yolo_device=yolo_device,
-        )
-        return detector, "yolo_or_hog"
+        detector = MediaPipeVisionDetector(config)
+        return detector, "mediapipe"
+    except Exception as exc:
+        logger.warning("MediaPipe detector unavailable, fallback to OpenCV HOG: %s", exc)
+        return OpenCvHogVisionDetector(), "opencv_hog"
+
+
+def _should_enable_yolo() -> bool:
+    configured = os.getenv("DEVICE_ENABLE_YOLO")
+    if configured is not None:
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    machine = platform.machine().lower()
+    # Raspberry Pi deployments should not import torch/ultralytics by default:
+    # a bad CUDA wheel can terminate the process before Python can recover.
+    if machine in {"aarch64", "arm64", "armv7l", "armv6l"}:
+        return False
+    return True
 
 
 class AsyncDetector:

@@ -1,13 +1,18 @@
 # Direct dependencies for the Raspberry Pi runtime and its local API.
+#
+# Keep this list Raspberry Pi safe:
+# - Do not install ultralytics/torch by default. On Raspberry Pi, pip may pull
+#   CUDA torch wheels and nvidia-* packages, which are not usable here.
+# - Runtime detection will gracefully fall back to MediaPipe/OpenCV when YOLO is
+#   not installed.
 fastapi>=0.115
 uvicorn>=0.30
 python-multipart>=0.0.9
 httpx>=0.27
 
 numpy<2
-opencv-python>=4.8
+opencv-python-headless>=4.8
 Pillow>=10.0
 mediapipe==0.10.14
-ultralytics>=8.3
 
 pyserial>=3.5

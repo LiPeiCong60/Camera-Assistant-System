@@ -419,7 +419,9 @@ class MobileService:
             }
             return None, "unconfigured_ai", provider_metadata
 
-        is_ready = bool(config.enabled and config.api_key and config.api_base_url and config.model_name)
+        requires_api_key = (config.vendor_name or "").strip().lower() != "ollama"
+        has_required_api_key = bool(config.api_key) or not requires_api_key
+        is_ready = bool(config.enabled and has_required_api_key and config.api_base_url and config.model_name)
         provider_name = config.provider_code
         provider_metadata = {
             "mode": "real_provider_ready" if is_ready else "provider_not_ready",
@@ -433,6 +435,7 @@ class MobileService:
             "enabled": config.enabled,
             "is_default": config.is_default,
             "has_api_key": bool(config.api_key),
+            "requires_api_key": requires_api_key,
             "selection_mode": selection_mode,
             "requested_provider_code": requested_provider_code,
             "plan_id": selected_plan.id if selected_plan is not None else None,
@@ -449,7 +452,7 @@ class MobileService:
         issues: list[str] = []
         if not config.enabled:
             issues.append("provider disabled")
-        if not config.api_key:
+        if (config.vendor_name or "").strip().lower() != "ollama" and not config.api_key:
             issues.append("missing api_key")
         if not config.api_base_url:
             issues.append("missing api_base_url")

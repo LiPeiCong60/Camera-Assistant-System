@@ -65,7 +65,7 @@ class AiProviderService:
             )
         if not self.config.api_base_url:
             raise AiProviderInvocationError("api_base_url is missing")
-        if not self.config.api_key:
+        if self._provider_requires_api_key() and not self.config.api_key:
             raise AiProviderInvocationError("api_key is missing")
         if not self.config.model_name:
             raise AiProviderInvocationError("model_name is missing")
@@ -93,10 +93,7 @@ class AiProviderService:
             payload["audioRepetitionPenalty"] = 1.1
             payload["inferenceCount"] = 1
             payload["output_modalities"] = ["text"]
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._build_provider_headers()
 
         try:
             raw_response = self._post_provider_json(
@@ -141,7 +138,7 @@ class AiProviderService:
             )
         if not self.config.api_base_url:
             raise AiProviderInvocationError("api_base_url is missing")
-        if not self.config.api_key:
+        if self._provider_requires_api_key() and not self.config.api_key:
             raise AiProviderInvocationError("api_key is missing")
         if not self.config.model_name:
             raise AiProviderInvocationError("model_name is missing")
@@ -169,10 +166,7 @@ class AiProviderService:
             payload["audioRepetitionPenalty"] = 1.1
             payload["inferenceCount"] = 1
             payload["output_modalities"] = ["text"]
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = self._build_provider_headers()
 
         try:
             raw_response = self._post_provider_json(
@@ -212,6 +206,21 @@ class AiProviderService:
         if cleaned.endswith("/v1"):
             return f"{cleaned}/chat/completions"
         return f"{cleaned}/v1/chat/completions"
+
+    def _provider_requires_api_key(self) -> bool:
+        return not self._uses_ollama_provider()
+
+    def _build_provider_headers(self) -> dict[str, str]:
+        api_key = (self.config.api_key or "").strip()
+        if not api_key and self._uses_ollama_provider():
+            api_key = "ollama"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    def _uses_ollama_provider(self) -> bool:
+        return (self.config.vendor_name or "").strip().lower() == "ollama"
 
     def _build_structured_messages(self, *, capture: Capture, prompt: str) -> list[dict[str, Any]]:
         system_prompt = (

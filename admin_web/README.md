@@ -1,77 +1,67 @@
 # admin_web
 
-管理后台模块，技术栈按定稿使用 `Vue 3 + Vite + Element Plus`。
+Camera Assistant 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。
 
-## 当前已完成
+## 职责
 
-- 后台工程初始化完成，可直接运行 `npm run dev`
-- 已接入：
-  - `Element Plus`
-  - `Pinia`
-  - `Vue Router`
-  - `Axios`
-- 已完成登录页、后台主框架、侧边导航、顶部栏
-- 已完成工作台基础统计页
-- 已完成用户管理页
-- 已完成套餐管理页：
-  - 套餐列表
-  - 新建套餐
-  - 编辑套餐
-  - 删除套餐
-  - 套餐绑定已有 AI 配置
-- 已完成设备列表页
-- 已完成拍摄记录页
-- 已完成 AI 任务页
-- 已完成 AI Provider 配置管理页：
-  - 多厂商
-  - 多模型
-  - 多密钥
-  - 默认配置切换
+- 管理员登录。
+- 概览统计。
+- 用户管理和套餐绑定。
+- 套餐管理，包含额度和 AI Provider 绑定。
+- 推荐默认模板管理。
+- 设备列表管理。
+- 抓拍记录和 AI 任务回看。
+- 多 AI Provider 配置管理。
 
-## 本地启动
+## 启动
 
-在 `admin_web` 目录执行：
-
-```bash
+```powershell
+cd admin_web
 npm install
+$env:VITE_API_BASE_URL="http://127.0.0.1:8000/api"
 npm run dev
 ```
 
-默认开发地址：
+默认访问：
 
-- `http://127.0.0.1:5173`
-
-如需连接本机 backend，可覆盖：
-
-```bash
-VITE_API_BASE_URL=http://127.0.0.1:8000/api
+```text
+http://127.0.0.1:5173
 ```
 
-## 目录说明
+生产构建：
 
-- `src/views`：页面视图
-- `src/components`：通用组件
-- `src/api`：后端接口封装
-- `src/stores`：状态管理
-- `src/router`：前端路由
-- `src/styles`：全局样式
+```powershell
+npm run build
+```
 
-## 套餐与 AI 配置绑定规则
+## 目录
 
-- 每个套餐可以绑定一个“默认 AI 配置”
-- 每个套餐也可以补充多个“允许使用的 AI 配置”
-- backend 运行时会优先读取用户当前订阅套餐中的默认 AI 配置
-- 如果默认配置缺失，再尝试套餐允许列表中的第一个可用配置
-- 如果套餐下仍有关联订阅，后台不允许直接删除该套餐
+| 目录 | 说明 |
+| --- | --- |
+| `src/views` | 页面视图。 |
+| `src/components` | 侧栏、顶部栏等通用组件。 |
+| `src/api` | Axios 实例和管理端接口封装。 |
+| `src/stores` | Pinia 状态，保存 token、当前用户和 API 地址。 |
+| `src/router` | 前端路由和登录拦截。 |
+| `src/styles` | 全局样式。 |
 
-## 2026-04-21 补充
+## 页面路由
 
-- 已新增真实设备列表页：`src/views/DevicesView.vue`
-- 已接入接口：`GET /api/admin/devices`
-- 当前后台已可查看设备编号、名称、类型、在线状态、本地 IP、控制地址、固件版本、最近在线时间和创建时间
+- `/login`
+- `/admin/overview`
+- `/admin/users`
+- `/admin/plans`
+- `/admin/templates`
+- `/admin/devices`
+- `/admin/captures`
+- `/admin/ai-tasks`
+- `/admin/ai-provider`
 
-## 下一步
+## 套餐与 AI 配置
 
-- 继续推进 `M8 联调与收尾`
-- 做后台、手机端、设备端统一验收
-- 收口真实 AI 调用和部署文档
+套餐通过 `feature_flags` 影响后端 AI Provider 选择：
+
+- `default_ai_provider_code`：套餐默认 Provider。
+- `available_ai_provider_codes`：可用 Provider 列表。
+
+后端会优先使用套餐默认配置，其次使用可用列表中的第一个配置，最后退回系统默认配置。

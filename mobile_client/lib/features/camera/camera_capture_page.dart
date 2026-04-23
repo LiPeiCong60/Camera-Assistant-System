@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
@@ -38,6 +39,8 @@ class CameraCapturePage extends StatefulWidget {
 enum _CameraShootMode { normal, templateGuided, aiBurst, background }
 
 class _CameraCapturePageState extends State<CameraCapturePage> {
+  static const double _landscapePreviewFrameAspectRatio = 16 / 9;
+  static const double _portraitPreviewFrameAspectRatio = 9 / 16;
   static const Map<DeviceOrientation, int> _cameraOrientations =
       <DeviceOrientation, int>{
         DeviceOrientation.portraitUp: 0,
@@ -78,11 +81,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _isShootModePickerExpanded = false;
   bool _isImageStreamActive = false;
   bool _isProcessingPoseFrame = false;
+  bool _isHandlingOrientationChange = false;
   int _lastPoseFrameAtMs = 0;
   int _consecutivePoseMisses = 0;
   Timer? _bannerTimer;
   final List<XFile> _pendingBurstCaptures = <XFile>[];
   OverlaySettings _overlaySettings = const OverlaySettings();
+  Orientation? _lastScreenOrientation;
   late final PoseDetector _poseDetector = PoseDetector(
     options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
   );
@@ -90,6 +95,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_applyCameraPageOrientations());
     _setupCamera();
     _loadTemplates();
   }
@@ -97,6 +103,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   @override
   void dispose() {
     _bannerTimer?.cancel();
+    unawaited(_restoreAppOrientations());
     _stopLivePoseDetection();
     _poseDetector.close();
     _controller?.dispose();
@@ -108,6 +115,75 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
 
   bool get _shouldMirrorPreview => _mirrorPreview && _isFrontCameraActive;
+
+  bool _isPreviewLandscape(CameraController controller) {
+    final orientation = controller.value.isRecordingVideo
+        ? controller.value.recordingOrientation
+        : (controller.value.previewPauseOrientation ??
+              controller.value.lockedCaptureOrientation ??
+              controller.value.deviceOrientation);
+    return orientation == DeviceOrientation.landscapeLeft ||
+        orientation == DeviceOrientation.landscapeRight;
+  }
+
+  double _previewWidgetAspectRatio(CameraController controller) {
+    return _isPreviewLandscape(controller)
+        ? controller.value.aspectRatio
+        : 1 / controller.value.aspectRatio;
+  }
+
+  DeviceOrientation _applicablePreviewOrientation(CameraController controller) {
+    return controller.value.isRecordingVideo
+        ? controller.value.recordingOrientation!
+        : (controller.value.previewPauseOrientation ??
+              controller.value.lockedCaptureOrientation ??
+              controller.value.deviceOrientation);
+  }
+
+  int _previewQuarterTurns(CameraController controller) {
+    switch (_applicablePreviewOrientation(controller)) {
+      case DeviceOrientation.portraitUp:
+        return 0;
+      case DeviceOrientation.landscapeRight:
+        return 1;
+      case DeviceOrientation.portraitDown:
+        return 2;
+      case DeviceOrientation.landscapeLeft:
+        return 3;
+    }
+  }
+
+  Widget _buildPlatformPreview(CameraController controller) {
+    return ValueListenableBuilder<CameraValue>(
+      valueListenable: controller,
+      child: IgnorePointer(
+        child: CustomPaint(
+          painter: CameraOverlayPainter(
+            scene: _overlayScene,
+            settings: _overlaySettings,
+            mirrorDynamicOverlays: false,
+          ),
+        ),
+      ),
+      builder: (BuildContext context, CameraValue value, Widget? overlayChild) {
+        Widget preview = controller.buildPreview();
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          preview = RotatedBox(
+            quarterTurns: _previewQuarterTurns(controller),
+            child: preview,
+          );
+        }
+        return Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            preview,
+            // ignore: use_null_aware_elements
+            if (overlayChild != null) overlayChild,
+          ],
+        );
+      },
+    );
+  }
 
   bool get _hasPendingBurstCaptures => _pendingBurstCaptures.isNotEmpty;
 
@@ -141,6 +217,18 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         });
       });
     }
+  }
+
+  Future<void> _applyCameraPageOrientations() {
+    return SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  Future<void> _restoreAppOrientations() {
+    return SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   }
 
   Future<void> _setupCamera() async {
@@ -1136,7 +1224,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return dynamicScene.copyWith(
       templateSegments: _overlaySettings.showTemplate
           ? (_templateOverlayScene?.templateSegments ??
-              const <OverlaySegment>[])
+                const <OverlaySegment>[])
           : const <OverlaySegment>[],
     );
   }
@@ -1196,7 +1284,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     _consecutivePoseMisses = 0;
     try {
       await controller.startImageStream((CameraImage image) {
-        if (!mounted || _isProcessingPoseFrame || !_shouldRunLivePoseDetection) {
+        if (!mounted ||
+            _isProcessingPoseFrame ||
+            !_shouldRunLivePoseDetection) {
           return;
         }
         final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -1220,7 +1310,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Future<void> _stopLivePoseDetection({bool clearOverlay = true}) async {
     final controller = _controller;
     final wasStreaming =
-        _isImageStreamActive && controller != null && controller.value.isInitialized;
+        _isImageStreamActive &&
+        controller != null &&
+        controller.value.isInitialized;
     _isImageStreamActive = false;
     _isProcessingPoseFrame = false;
     _lastPoseFrameAtMs = 0;
@@ -1318,8 +1410,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       }
       var rotationCompensation = deviceOrientation;
       if (camera.lensDirection == CameraLensDirection.front) {
-        rotationCompensation =
-            (sensorOrientation + rotationCompensation) % 360;
+        rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
       } else {
         rotationCompensation =
             (sensorOrientation - rotationCompensation + 360) % 360;
@@ -1366,11 +1457,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     final sampledPoints = pose.landmarks.values
         .where((landmark) => landmark.likelihood >= 0.25)
         .map(
-          (landmark) => _normalizePosePoint(
-            landmark.x,
-            landmark.y,
-            normalizedImageSize,
-          ),
+          (landmark) =>
+              _normalizePosePoint(landmark.x, landmark.y, normalizedImageSize),
         )
         .toList(growable: false);
     if (sampledPoints.isEmpty) {
@@ -1436,122 +1524,71 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
     final fallbackScene = OverlayScene.fromTargetBox(bodyBox);
     final skeletonPoints = <NormalizedPoint>[
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[
-              PoseLandmarkType.nose,
-              PoseLandmarkType.leftEye,
-              PoseLandmarkType.rightEye,
-            ],
-            minLikelihood: 0.3,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.nose,
+            PoseLandmarkType.leftEye,
+            PoseLandmarkType.rightEye,
+          ], minLikelihood: 0.3) ??
           fallbackScene.skeletonPoints[0],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftShoulder],
-            minLikelihood: 0.22,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftShoulder,
+          ], minLikelihood: 0.22) ??
           fallbackScene.skeletonPoints[1],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightShoulder],
-            minLikelihood: 0.22,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightShoulder,
+          ], minLikelihood: 0.22) ??
           fallbackScene.skeletonPoints[2],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftElbow],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftElbow,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[3],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightElbow],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightElbow,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[4],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftWrist],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftWrist,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[5],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightWrist],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightWrist,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[6],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftHip],
-            minLikelihood: 0.22,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftHip,
+          ], minLikelihood: 0.22) ??
           fallbackScene.skeletonPoints[7],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightHip],
-            minLikelihood: 0.22,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightHip,
+          ], minLikelihood: 0.22) ??
           fallbackScene.skeletonPoints[8],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftKnee],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftKnee,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[9],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightKnee],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightKnee,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[10],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[
-              PoseLandmarkType.leftAnkle,
-              PoseLandmarkType.leftHeel,
-              PoseLandmarkType.leftFootIndex,
-            ],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftAnkle,
+            PoseLandmarkType.leftHeel,
+            PoseLandmarkType.leftFootIndex,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[11],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[
-              PoseLandmarkType.rightAnkle,
-              PoseLandmarkType.rightHeel,
-              PoseLandmarkType.rightFootIndex,
-            ],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightAnkle,
+            PoseLandmarkType.rightHeel,
+            PoseLandmarkType.rightFootIndex,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[12],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.leftFootIndex],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.leftFootIndex,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[13],
-      _normalizedPosePoint(
-            landmarks,
-            normalizedImageSize,
-            <PoseLandmarkType>[PoseLandmarkType.rightFootIndex],
-            minLikelihood: 0.25,
-          ) ??
+      _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
+            PoseLandmarkType.rightFootIndex,
+          ], minLikelihood: 0.25) ??
           fallbackScene.skeletonPoints[14],
     ];
 
@@ -1603,8 +1640,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     Size imageSize,
     List<PoseLandmarkType> types, {
     double minLikelihood = 0.15,
-  }
-  ) {
+  }) {
     for (final type in types) {
       final landmark = landmarks[type];
       if (landmark == null || landmark.likelihood < minLikelihood) {
@@ -1690,14 +1726,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Widget build(BuildContext context) {
     final orientation = MediaQuery.orientationOf(context);
     final isLandscape = orientation == Orientation.landscape;
+    _syncScreenOrientation(orientation);
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          Positioned.fill(child: _buildPreview()),
-          const Positioned.fill(child: _CompositionGuide()),
+          _buildPreviewRegion(),
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -1715,32 +1751,102 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               ),
             ),
           ),
-          SafeArea(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                isLandscape ? 20 : 16,
-                10,
-                isLandscape ? 20 : 16,
-                isLandscape ? 8 : 14,
-              ),
-              child: Stack(
+          _buildChrome(context, isLandscape: isLandscape),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChrome(BuildContext context, {required bool isLandscape}) {
+    return isLandscape
+        ? _buildLandscapeChrome(context)
+        : _buildPortraitChrome(context);
+  }
+
+  Widget _buildPortraitChrome(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+        child: Stack(
+            children: <Widget>[
+              Column(
                 children: <Widget>[
                   Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      _buildTopBar(context, isLandscape: isLandscape),
-                      SizedBox(height: isLandscape ? 8 : 12),
+                      _buildTopBar(context, isLandscape: false),
+                      const SizedBox(height: 12),
                       _buildTopBanners(),
-                      const Spacer(),
-                      _buildBottomHud(context, isLandscape: isLandscape),
                     ],
                   ),
-                  if (_isPreparing)
-                    const Center(child: CircularProgressIndicator()),
+                  const Spacer(),
+                  _buildBottomHud(context, isLandscape: false),
                 ],
               ),
+              if (_isPreparing) const Center(child: CircularProgressIndicator()),
+            ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeChrome(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Stack(
+          children: <Widget>[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _buildLandscapeLeftPanel(context),
+                const Spacer(),
+                _buildLandscapeRightPanel(context),
+              ],
             ),
-          ),
-        ],
+            if (_isPreparing) const Center(child: CircularProgressIndicator()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewRegion() {
+    return Positioned.fill(
+      child: Builder(
+        builder: (BuildContext context) {
+          final isLandscape =
+              MediaQuery.orientationOf(context) == Orientation.landscape;
+          return LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final frameAspectRatio = isLandscape
+                  ? _landscapePreviewFrameAspectRatio
+                  : _portraitPreviewFrameAspectRatio;
+              var frameWidth = constraints.maxWidth;
+              var frameHeight = frameWidth / frameAspectRatio;
+              if (frameHeight > constraints.maxHeight) {
+                frameHeight = constraints.maxHeight;
+                frameWidth = frameHeight * frameAspectRatio;
+              }
+
+              final frame = SizedBox(
+                width: frameWidth,
+                height: frameHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    Positioned.fill(child: _buildPreview()),
+                    const Positioned.fill(child: _CompositionGuide()),
+                  ],
+                ),
+              );
+
+              return isLandscape
+                  ? Align(alignment: Alignment.centerRight, child: frame)
+                  : Center(child: frame);
+            },
+          );
+        },
       ),
     );
   }
@@ -1761,38 +1867,30 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       return _buildPreviewHint('摄像头还没有就绪，请稍等片刻。\n如果长时间没有画面，通常是模拟器相机没有启用。');
     }
 
-    final preview = SizedBox(
-      width: controller.value.previewSize!.height,
-      height: controller.value.previewSize!.width,
-      child: Stack(
-        fit: StackFit.expand,
-        clipBehavior: Clip.hardEdge,
-        children: <Widget>[
-          CameraPreview(controller),
-          IgnorePointer(
-            child: CustomPaint(
-              painter: CameraOverlayPainter(
-                scene: _overlayScene,
-                settings: _overlaySettings,
-                mirrorDynamicOverlays: false,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+    final previewAspectRatio = _previewWidgetAspectRatio(controller);
+    final previewWidth = previewAspectRatio >= 1 ? 1600 * previewAspectRatio : 1600.0;
+    final previewHeight = previewAspectRatio >= 1 ? 1600.0 : 1600 / previewAspectRatio;
 
     return ClipRect(
       child: ColoredBox(
         color: Colors.black,
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: Transform(
-            alignment: Alignment.center,
-            transform: _shouldMirrorPreview
-                ? Matrix4.diagonal3Values(-1.0, 1.0, 1.0)
-                : Matrix4.identity(),
-            child: preview,
+        child: SizedBox.expand(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+              width: previewWidth,
+              height: previewHeight,
+              child: Transform(
+                alignment: Alignment.center,
+                transform: _shouldMirrorPreview
+                    ? Matrix4.diagonal3Values(-1.0, 1.0, 1.0)
+                    : Matrix4.identity(),
+                child: KeyedSubtree(
+                  key: ValueKey<String>('camera-preview-$_selectedCameraIndex'),
+                  child: _buildPlatformPreview(controller),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -1811,6 +1909,254 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             style: const TextStyle(color: Colors.white70, height: 1.6),
           ),
         ),
+      ),
+    );
+  }
+
+  void _syncScreenOrientation(Orientation orientation) {
+    final previousOrientation = _lastScreenOrientation;
+    _lastScreenOrientation = orientation;
+    if (previousOrientation == null || previousOrientation == orientation) {
+      return;
+    }
+    if (_isHandlingOrientationChange || _isPreparing || _isCapturing) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isHandlingOrientationChange) {
+        return;
+      }
+      unawaited(_reinitializeCameraForOrientationChange());
+    });
+  }
+
+  Future<void> _reinitializeCameraForOrientationChange() async {
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _isPreparing ||
+        _isCapturing) {
+      return;
+    }
+
+    _isHandlingOrientationChange = true;
+    if (mounted) {
+      setState(() {
+        _isPreparing = true;
+        _errorMessage = null;
+      });
+    }
+
+    try {
+      await _openCamera(_selectedCameraIndex);
+    } on CameraException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPreparing = false;
+      });
+      _showBanner(errorMessage: _mapCameraException(error));
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPreparing = false;
+      });
+      _showBanner(errorMessage: '屏幕旋转后重新载入摄像头失败，请稍后重试。');
+    } finally {
+      _isHandlingOrientationChange = false;
+    }
+  }
+
+  Widget _buildLandscapeLeftPanel(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 196),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _buildTopBanners(),
+              if (_isBannerVisible) const SizedBox(height: 14),
+              if (_isShootModePickerExpanded) ...<Widget>[
+                _buildModePopup(isLandscape: true),
+                const SizedBox(height: 12),
+              ],
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  _buildLandscapeControlRail(),
+                  const SizedBox(width: 10),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _buildLandscapeOverlayColumn(),
+                      const SizedBox(height: 10),
+                      _buildLandscapeStatusColumn(),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeControlRail() {
+    final railButtonSize = 48.0;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            _DockActionButton(
+              icon: Icons.tune_rounded,
+              label: '详情',
+              size: railButtonSize,
+              onTap: _openDetailsSheet,
+              child: _buildRecentCaptureThumb(),
+            ),
+            const SizedBox(height: 10),
+            _ModeMenuButton(
+              label: '模式',
+              size: railButtonSize,
+              compact: true,
+              expanded: _isShootModePickerExpanded,
+              onTap: _toggleShootModePicker,
+            ),
+            const SizedBox(height: 10),
+            _ShutterButton(
+              size: 68,
+              isBusy: _isCapturing,
+              onTap: _isPreparing || _isCapturing || _isSubmitting
+                  ? null
+                  : _capturePhoto,
+            ),
+            const SizedBox(height: 10),
+            _DockActionButton(
+              icon: Icons.cameraswitch_outlined,
+              label: '切换',
+              size: railButtonSize,
+              onTap: _cameras.length > 1 && !_isPreparing && !_isSubmitting
+                  ? _toggleCamera
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            _DockActionButton(
+              icon: Icons.auto_awesome_outlined,
+              label: _isSubmitting ? '分析中' : '分析',
+              size: railButtonSize,
+              onTap:
+                  _canAnalyzeCurrentSelection &&
+                      !_isPreparing &&
+                      !_isCapturing &&
+                      !_isSubmitting
+                  ? _uploadAndAnalyze
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLandscapeOverlayColumn() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _OverlayChip(
+          label: '人体框',
+          selected: _overlaySettings.showBodyBox,
+          color: const Color(0xFF00D084),
+          compact: true,
+          onTap: () {
+            _updateOverlaySettings(
+              _overlaySettings.copyWith(
+                showBodyBox: !_overlaySettings.showBodyBox,
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        _OverlayChip(
+          label: '骨架线',
+          selected: _overlaySettings.showSkeleton,
+          color: const Color(0xFF42C6FF),
+          compact: true,
+          onTap: () {
+            _updateOverlaySettings(
+              _overlaySettings.copyWith(
+                showSkeleton: !_overlaySettings.showSkeleton,
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLandscapeStatusColumn() {
+    final statusItems = <({String label, String value})>[
+      (label: '模式', value: _shootModeLabel),
+      (label: '状态', value: _currentCaptureStatusLabel()),
+    ];
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: statusItems
+          .map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 96),
+                child: _StatusPill(label: item.label, value: item.value),
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Widget _buildLandscapeRightPanel(BuildContext context) {
+    return SizedBox(
+      width: 56,
+      child: Column(
+        children: <Widget>[
+          Align(
+            alignment: Alignment.topRight,
+            child: _GlassIconButton(
+              icon: Icons.arrow_back_ios_new,
+              tooltip: '返回',
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ),
+          const Spacer(),
+          RotatedBox(
+            quarterTurns: 1,
+            child: Text(
+              '拍摄',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const Spacer(),
+        ],
       ),
     );
   }
@@ -1906,12 +2252,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             SizedBox(height: isLandscape ? 6 : 8),
             Align(
               alignment: Alignment.center,
-            child: _OverlayToggleBar(
-              settings: _overlaySettings,
-              onChanged: _updateOverlaySettings,
-              compact: isLandscape,
-              showTemplateToggle: false,
-            ),
+              child: _OverlayToggleBar(
+                settings: _overlaySettings,
+                onChanged: _updateOverlaySettings,
+                compact: isLandscape,
+                showTemplateToggle: false,
+              ),
             ),
             SizedBox(height: isLandscape ? 8 : 10),
             _buildCaptureDock(isLandscape: isLandscape),
@@ -2203,7 +2549,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                       ),
                   ],
                 ),
-                if (analysisSummary != null && analysisSummary.isNotEmpty) ...<Widget>[
+                if (analysisSummary != null &&
+                    analysisSummary.isNotEmpty) ...<Widget>[
                   const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
@@ -2231,9 +2578,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                     _lastUploadedCapture != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 12),
-                    child: const _SheetHintBlock(
-                      message: 'AI 已从本轮连拍中选出最佳照片。',
-                    ),
+                    child: const _SheetHintBlock(message: 'AI 已从本轮连拍中选出最佳照片。'),
                   ),
               ],
             ),
@@ -2315,10 +2660,16 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                         ? '未就绪'
                         : _lensDirectionLabel(_cameras[_selectedCameraIndex]),
                   ),
-                  _SheetStatCard(label: '画面方向', value: _orientationLabel(orientation)),
+                  _SheetStatCard(
+                    label: '画面方向',
+                    value: _orientationLabel(orientation),
+                  ),
                   _SheetStatCard(label: '前摄镜像', value: _mirrorStatusLabel()),
                   if (_selectedTemplate != null)
-                    _SheetStatCard(label: '当前模板', value: _selectedTemplate!.name),
+                    _SheetStatCard(
+                      label: '当前模板',
+                      value: _selectedTemplate!.name,
+                    ),
                 ],
               ),
               const SizedBox(height: 14),
@@ -2355,10 +2706,17 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             spacing: 12,
             runSpacing: 12,
             children: <Widget>[
-              _SheetStatCard(label: '拍摄状态', value: _currentCaptureStatusLabel()),
+              _SheetStatCard(
+                label: '拍摄状态',
+                value: _currentCaptureStatusLabel(),
+              ),
               _SheetStatCard(label: '分析状态', value: _analysisStatusLabel()),
               _SheetStatCard(label: '设备联动', value: _deviceFlowStatusLabel()),
-              _SheetStatCard(label: '取景状态', value: _overlayStatusLabel(), wide: true),
+              _SheetStatCard(
+                label: '取景状态',
+                value: _overlayStatusLabel(),
+                wide: true,
+              ),
             ],
           ),
         ),
@@ -2371,12 +2729,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               if (_captureSession != null)
                 _SheetInfoLine(
                   label: '拍摄会话',
-                  value: '${_captureSession!.sessionCode} / ${_captureSession!.status}',
+                  value:
+                      '${_captureSession!.sessionCode} / ${_captureSession!.status}',
                 ),
               if (_lastUploadedCapture != null)
                 _SheetInfoLine(
                   label: '抓拍记录',
-                  value: '#${_lastUploadedCapture!.id} · ${_lastUploadedCapture!.captureType}',
+                  value:
+                      '#${_lastUploadedCapture!.id} · ${_lastUploadedCapture!.captureType}',
                 ),
               if (_lastAiTask != null)
                 _SheetInfoLine(label: '任务编号', value: _lastAiTask!.taskCode),
@@ -2459,9 +2819,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             child: LinearProgressIndicator(minHeight: 3),
           )
         else if (_templates.isEmpty)
-          const _SheetHintBlock(
-            message: '暂无模板。当前仍可直接拍照，也可以稍后新增模板继续构图。',
-          )
+          const _SheetHintBlock(message: '暂无模板。当前仍可直接拍照，也可以稍后新增模板继续构图。')
         else
           Wrap(
             spacing: 10,
