@@ -8,17 +8,23 @@ import '../../models/plan_summary.dart';
 import '../../models/subscription_info.dart';
 import '../../models/user_profile.dart';
 import '../../services/api_client.dart';
+import '../../services/app_config.dart';
 import '../../services/mobile_api_service.dart';
 
 class AuthController extends ChangeNotifier {
   static const String _sessionPrefsKey = 'auth.session';
 
-  AuthController({required MobileApiService apiService})
-    : _apiService = apiService;
+  AuthController({
+    required MobileApiService apiService,
+    required ServerConfig serverConfig,
+  }) : _apiService = apiService,
+       _serverConfig = serverConfig;
 
   final MobileApiService _apiService;
+  final ServerConfig _serverConfig;
 
   MobileApiService get apiService => _apiService;
+  ServerConfig get serverConfig => _serverConfig;
 
   AuthSession? session;
   UserProfile? profile;

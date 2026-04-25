@@ -299,6 +299,8 @@ class _QuickActionSection extends StatelessWidget {
                             builder: (_) => DeviceLinkPage(
                               mobileApiService: controller.apiService,
                               accessToken: session!.accessToken,
+                              initialDeviceApiBaseUrl:
+                                  controller.serverConfig.deviceApiBaseUrl,
                             ),
                           ),
                         );

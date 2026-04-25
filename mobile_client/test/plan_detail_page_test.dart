@@ -8,6 +8,7 @@ import 'package:mobile_client/models/capture_record.dart';
 import 'package:mobile_client/models/plan_summary.dart';
 import 'package:mobile_client/models/subscription_info.dart';
 import 'package:mobile_client/models/user_profile.dart';
+import 'package:mobile_client/services/app_config.dart';
 import 'package:mobile_client/services/mobile_api_service.dart';
 
 class _FakeMobileApiService extends MobileApiService {
@@ -49,65 +50,69 @@ void main() {
           ),
         ],
       );
-      final controller = AuthController(apiService: apiService)
-        ..session = const AuthSession(
-          accessToken: 'token',
-          tokenType: 'bearer',
-          user: AuthUserSummary(
-            id: 1,
-            displayName: '测试用户',
-            role: 'user',
-            status: 'active',
-          ),
-        )
-        ..profile = const UserProfile(
-          id: 1,
-          userCode: 'USR_0001',
-          displayName: '测试用户',
-          role: 'user',
-          status: 'active',
-        )
-        ..plans = const <PlanSummary>[
-          PlanSummary(
-            id: 1,
-            planCode: 'BASIC_MONTHLY',
-            name: '入门版',
-            description: '适合日常拍摄使用。',
-            priceCents: 1000,
-            currency: 'CNY',
-            billingCycleDays: 30,
-            captureQuota: 10,
-            aiTaskQuota: 5,
-            featureFlags: <String, dynamic>{'background_lock': true},
-            status: 'active',
-          ),
-          PlanSummary(
-            id: 2,
-            planCode: 'PRO_MONTHLY',
-            name: '专业版',
-            description: '适合更高频率的拍摄场景。',
-            priceCents: 2000,
-            currency: 'CNY',
-            billingCycleDays: 30,
-            captureQuota: 30,
-            aiTaskQuota: 15,
-            featureFlags: <String, dynamic>{'batch_pick': true},
-            status: 'active',
-          ),
-        ]
-        ..subscription = SubscriptionInfo(
-          id: 100,
-          userId: 1,
-          planId: 1,
-          status: 'active',
-          startedAt: DateTime(2026, 4, 19),
-          expiresAt: DateTime(2026, 5, 19),
-          autoRenew: false,
-          quotaSnapshot: const <String, dynamic>{
-            'capture_quota': 10,
-            'ai_task_quota': 5,
-          },
-        );
+      final controller =
+          AuthController(
+              apiService: apiService,
+              serverConfig: AppConfig.defaultServerConfig,
+            )
+            ..session = const AuthSession(
+              accessToken: 'token',
+              tokenType: 'bearer',
+              user: AuthUserSummary(
+                id: 1,
+                displayName: '测试用户',
+                role: 'user',
+                status: 'active',
+              ),
+            )
+            ..profile = const UserProfile(
+              id: 1,
+              userCode: 'USR_0001',
+              displayName: '测试用户',
+              role: 'user',
+              status: 'active',
+            )
+            ..plans = const <PlanSummary>[
+              PlanSummary(
+                id: 1,
+                planCode: 'BASIC_MONTHLY',
+                name: '入门版',
+                description: '适合日常拍摄使用。',
+                priceCents: 1000,
+                currency: 'CNY',
+                billingCycleDays: 30,
+                captureQuota: 10,
+                aiTaskQuota: 5,
+                featureFlags: <String, dynamic>{'background_lock': true},
+                status: 'active',
+              ),
+              PlanSummary(
+                id: 2,
+                planCode: 'PRO_MONTHLY',
+                name: '专业版',
+                description: '适合更高频率的拍摄场景。',
+                priceCents: 2000,
+                currency: 'CNY',
+                billingCycleDays: 30,
+                captureQuota: 30,
+                aiTaskQuota: 15,
+                featureFlags: <String, dynamic>{'batch_pick': true},
+                status: 'active',
+              ),
+            ]
+            ..subscription = SubscriptionInfo(
+              id: 100,
+              userId: 1,
+              planId: 1,
+              status: 'active',
+              startedAt: DateTime(2026, 4, 19),
+              expiresAt: DateTime(2026, 5, 19),
+              autoRenew: false,
+              quotaSnapshot: const <String, dynamic>{
+                'capture_quota': 10,
+                'ai_task_quota': 5,
+              },
+            );
 
       await tester.pumpWidget(
         MaterialApp(home: HomePage(controller: controller)),

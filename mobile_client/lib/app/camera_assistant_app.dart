@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../features/auth/auth_controller.dart';
 import '../features/auth/login_page.dart';
 import '../features/home/home_page.dart';
+import '../features/settings/server_config_page.dart';
 import '../services/app_config.dart';
 import '../services/mobile_api_service.dart';
 
@@ -14,24 +15,70 @@ class CameraAssistantApp extends StatefulWidget {
 }
 
 class _CameraAssistantAppState extends State<CameraAssistantApp> {
-  late final AuthController _authController;
+  AuthController? _authController;
+  ServerConfig? _serverConfig;
+  bool _isLoadingServerConfig = true;
+  bool _hasSavedServerConfig = false;
+  bool _isEditingServerConfig = false;
 
   @override
   void initState() {
     super.initState();
-    _authController = AuthController(
-      apiService: MobileApiService(apiBaseUrl: AppConfig.apiBaseUrl),
-    );
-    _bootstrapAuth();
+    _loadServerConfig();
   }
 
-  Future<void> _bootstrapAuth() async {
-    await _authController.restoreSession();
+  AuthController _createAuthController(ServerConfig config) {
+    return AuthController(
+      apiService: MobileApiService(apiBaseUrl: config.apiBaseUrl),
+      serverConfig: config,
+    );
+  }
+
+  Future<void> _loadServerConfig() async {
+    final config = await AppConfig.loadServerConfig();
+    final hasSavedConfig = await AppConfig.hasSavedServerConfig();
+    if (!mounted) {
+      return;
+    }
+    final authController = _createAuthController(config);
+    setState(() {
+      _serverConfig = config;
+      _authController = authController;
+      _hasSavedServerConfig = hasSavedConfig;
+      _isLoadingServerConfig = false;
+    });
+    if (hasSavedConfig) {
+      await authController.restoreSession();
+    }
+  }
+
+  Future<void> _saveServerConfig(ServerConfig config) async {
+    final normalizedConfig = ServerConfig(
+      apiBaseUrl: AppConfig.normalizeApiBaseUrl(config.apiBaseUrl),
+      deviceApiBaseUrl: AppConfig.normalizeDeviceApiBaseUrl(
+        config.deviceApiBaseUrl,
+      ),
+    );
+    await AppConfig.saveServerConfig(normalizedConfig);
+    final previousController = _authController;
+    final authController = _createAuthController(normalizedConfig);
+    if (!mounted) {
+      previousController?.dispose();
+      authController.dispose();
+      return;
+    }
+    setState(() {
+      _serverConfig = normalizedConfig;
+      _authController = authController;
+      _hasSavedServerConfig = true;
+      _isEditingServerConfig = false;
+    });
+    previousController?.dispose();
   }
 
   @override
   void dispose() {
-    _authController.dispose();
+    _authController?.dispose();
     super.dispose();
   }
 
@@ -78,19 +125,50 @@ class _CameraAssistantAppState extends State<CameraAssistantApp> {
           ),
         ),
       ),
-      home: AnimatedBuilder(
-        animation: _authController,
-        builder: (context, _) {
-          if (_authController.isRestoring) {
-            return const _AuthBootstrapPage();
-          }
-          if (_authController.session == null) {
-            return LoginPage(controller: _authController);
-          }
-          return HomePage(controller: _authController);
-        },
-      ),
+      home: _authController == null
+          ? _buildHome()
+          : AnimatedBuilder(
+              animation: _authController!,
+              builder: (context, _) => _buildHome(),
+            ),
     );
+  }
+
+  Widget _buildHome() {
+    final authController = _authController;
+    final serverConfig = _serverConfig;
+    if (_isLoadingServerConfig ||
+        authController == null ||
+        serverConfig == null) {
+      return const _AuthBootstrapPage();
+    }
+    if (!_hasSavedServerConfig || _isEditingServerConfig) {
+      return ServerConfigPage(
+        initialConfig: serverConfig,
+        onSaved: _saveServerConfig,
+        onCancel: _hasSavedServerConfig
+            ? () {
+                setState(() {
+                  _isEditingServerConfig = false;
+                });
+              }
+            : null,
+      );
+    }
+    if (authController.isRestoring) {
+      return const _AuthBootstrapPage();
+    }
+    if (authController.session == null) {
+      return LoginPage(
+        controller: authController,
+        onOpenServerSettings: () {
+          setState(() {
+            _isEditingServerConfig = true;
+          });
+        },
+      );
+    }
+    return HomePage(controller: authController);
   }
 }
 

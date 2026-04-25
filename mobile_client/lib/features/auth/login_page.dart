@@ -4,9 +4,14 @@ import 'auth_controller.dart';
 import 'register_page.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.controller});
+  const LoginPage({
+    super.key,
+    required this.controller,
+    required this.onOpenServerSettings,
+  });
 
   final AuthController controller;
+  final VoidCallback onOpenServerSettings;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -118,14 +123,54 @@ class _LoginPageState extends State<LoginPage> {
                                   child: Form(
                                     key: _formKey,
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: <Widget>[
-                                        Text(
-                                          '账号登录',
-                                          style: Theme.of(context)
-                                              .textTheme
-                                              .titleLarge
-                                              ?.copyWith(fontWeight: FontWeight.w700),
+                                        Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: <Widget>[
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: <Widget>[
+                                                  Text(
+                                                    '账号登录',
+                                                    style: Theme.of(context)
+                                                        .textTheme
+                                                        .titleLarge
+                                                        ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w700,
+                                                        ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    widget
+                                                        .controller
+                                                        .serverConfig
+                                                        .apiBaseUrl,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      color: Color(0xFF5A6B70),
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            IconButton(
+                                              tooltip: '后台连接设置',
+                                              onPressed:
+                                                  widget.onOpenServerSettings,
+                                              icon: const Icon(
+                                                Icons.settings_ethernet,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                         const SizedBox(height: 18),
                                         TextFormField(
@@ -152,7 +197,8 @@ class _LoginPageState extends State<LoginPage> {
                                             hintText: '请输入密码',
                                           ),
                                           validator: (value) {
-                                            if (value == null || value.isEmpty) {
+                                            if (value == null ||
+                                                value.isEmpty) {
                                               return '请输入密码';
                                             }
                                             return null;
@@ -173,13 +219,15 @@ class _LoginPageState extends State<LoginPage> {
                                         SizedBox(
                                           width: double.infinity,
                                           child: FilledButton(
-                                            onPressed: widget.controller.isLoggingIn
+                                            onPressed:
+                                                widget.controller.isLoggingIn
                                                 ? null
                                                 : _submit,
                                             style: FilledButton.styleFrom(
-                                              padding: const EdgeInsets.symmetric(
-                                                vertical: 16,
-                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 16,
+                                                  ),
                                               backgroundColor: const Color(
                                                 0xFF0D5C63,
                                               ),
@@ -188,9 +236,10 @@ class _LoginPageState extends State<LoginPage> {
                                                 ? const SizedBox(
                                                     width: 20,
                                                     height: 20,
-                                                    child: CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                    ),
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
                                                   )
                                                 : const Text('登录'),
                                           ),
@@ -201,9 +250,10 @@ class _LoginPageState extends State<LoginPage> {
                                           child: OutlinedButton(
                                             onPressed: _openRegisterPage,
                                             style: OutlinedButton.styleFrom(
-                                              padding: const EdgeInsets.symmetric(
-                                                vertical: 16,
-                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    vertical: 16,
+                                                  ),
                                             ),
                                             child: const Text('没有账号？去注册'),
                                           ),

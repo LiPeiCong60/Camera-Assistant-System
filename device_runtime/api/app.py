@@ -12,6 +12,7 @@ from device_runtime.api.routes.session import router as session_router
 from device_runtime.api.routes.status import router as status_router
 from device_runtime.api.routes.stream import router as stream_router
 from device_runtime.api.routes.templates import router as templates_router
+from device_runtime.api.routes.webrtc import close_webrtc_peers, router as webrtc_router
 
 app = FastAPI(title="Camera Assistant Device Runtime API", version="0.1.0")
 
@@ -30,3 +31,9 @@ app.include_router(control_router)
 app.include_router(status_router)
 app.include_router(stream_router)
 app.include_router(templates_router)
+app.include_router(webrtc_router)
+
+
+@app.on_event("shutdown")
+async def shutdown_webrtc_peers() -> None:
+    await close_webrtc_peers()

@@ -45,6 +45,9 @@ demo/.template_library/
 demo/.venv/
 demo/
 
+# Local/private generated deliverables
+deliverables/
+
 # Local env / secrets
 .env
 .env.*

@@ -584,12 +584,7 @@ class DeviceSessionContext:
         )
 
     def get_preview_jpeg_bytes(self, *, quality: int = 75) -> bytes:
-        frame = self.runtime_state.latest_frame
-        if frame is None:
-            frame = self._acquire_frame_for_capture()
-        if frame is None:
-            raise ValueError("no frame available for preview")
-        frame = self._build_preview_frame(frame)
+        frame = self.get_preview_frame()
 
         normalized_quality = max(35, min(95, int(quality)))
         success, encoded = cv2.imencode(
@@ -600,6 +595,14 @@ class DeviceSessionContext:
         if not success:
             raise ValueError("failed to encode preview frame")
         return encoded.tobytes()
+
+    def get_preview_frame(self):
+        frame = self.runtime_state.latest_frame
+        if frame is None:
+            frame = self._acquire_frame_for_capture()
+        if frame is None:
+            raise ValueError("no frame available for preview")
+        return self._build_preview_frame(frame)
 
     def _build_preview_frame(self, frame):
         preview = frame.copy()

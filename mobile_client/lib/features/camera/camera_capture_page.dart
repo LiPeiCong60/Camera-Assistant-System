@@ -118,6 +118,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   bool get _shouldMirrorPreview => _mirrorPreview;
 
+  bool get _shouldMirrorDynamicOverlays {
+    final isFrontCamera =
+        _activeCamera?.lensDirection == CameraLensDirection.front;
+    return isFrontCamera ? !_shouldMirrorPreview : _shouldMirrorPreview;
+  }
+
   bool _isPreviewLandscape(CameraController controller) {
     final orientation = controller.value.isRecordingVideo
         ? controller.value.recordingOrientation
@@ -158,16 +164,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Widget _buildPlatformPreview(CameraController controller) {
     return ValueListenableBuilder<CameraValue>(
       valueListenable: controller,
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: CameraOverlayPainter(
-            scene: _overlayScene,
-            settings: _overlaySettings,
-            mirrorDynamicOverlays: false,
-          ),
-        ),
-      ),
-      builder: (BuildContext context, CameraValue value, Widget? overlayChild) {
+      builder: (BuildContext context, CameraValue value, Widget? child) {
         Widget preview = controller.buildPreview();
         if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
           preview = RotatedBox(
@@ -175,15 +172,20 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             child: preview,
           );
         }
-        return Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            preview,
-            // ignore: use_null_aware_elements
-            if (overlayChild != null) overlayChild,
-          ],
-        );
+        return preview;
       },
+    );
+  }
+
+  Widget _buildCameraOverlay() {
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: CameraOverlayPainter(
+          scene: _overlayScene,
+          settings: _overlaySettings,
+          mirrorDynamicOverlays: _shouldMirrorDynamicOverlays,
+        ),
+      ),
     );
   }
 
@@ -2118,15 +2120,23 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             child: SizedBox(
               width: previewWidth,
               height: previewHeight,
-              child: Transform(
-                alignment: Alignment.center,
-                transform: _shouldMirrorPreview
-                    ? Matrix4.diagonal3Values(-1.0, 1.0, 1.0)
-                    : Matrix4.identity(),
-                child: KeyedSubtree(
-                  key: ValueKey<String>('camera-preview-$_selectedCameraIndex'),
-                  child: _buildPlatformPreview(controller),
-                ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  Transform(
+                    alignment: Alignment.center,
+                    transform: _shouldMirrorPreview
+                        ? Matrix4.diagonal3Values(-1.0, 1.0, 1.0)
+                        : Matrix4.identity(),
+                    child: KeyedSubtree(
+                      key: ValueKey<String>(
+                        'camera-preview-$_selectedCameraIndex',
+                      ),
+                      child: _buildPlatformPreview(controller),
+                    ),
+                  ),
+                  Positioned.fill(child: _buildCameraOverlay()),
+                ],
               ),
             ),
           ),

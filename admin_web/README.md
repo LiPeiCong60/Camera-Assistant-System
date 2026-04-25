@@ -1,6 +1,6 @@
 # admin_web
 
-Camera Assistant 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。
+Camera Assistant 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。它只访问业务后端 `backend`，用于运营管理和数据回看，不直接连接 `device_runtime`。
 
 ## 职责
 
@@ -8,8 +8,8 @@ Camera Assistant 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。
 - 概览统计。
 - 用户管理和套餐绑定。
 - 套餐管理，包含额度和 AI Provider 绑定。
-- 推荐默认模板管理。
-- 设备列表管理。
+- 推荐默认模板管理和图片上传。
+- 设备登记信息管理。
 - 抓拍记录和 AI 任务回看。
 - 多 AI Provider 配置管理。
 
@@ -64,4 +64,4 @@ npm run build
 - `default_ai_provider_code`：套餐默认 Provider。
 - `available_ai_provider_codes`：可用 Provider 列表。
 
-后端会优先使用套餐默认配置，其次使用可用列表中的第一个配置，最后退回系统默认配置。
+后端会优先使用套餐默认配置，其次使用可用列表中的第一个可用配置，最后退回系统默认配置或 mock 结果。

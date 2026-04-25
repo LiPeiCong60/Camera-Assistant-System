@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,6 +22,7 @@ import '../../models/template_summary.dart';
 import '../../services/api_client.dart';
 import '../../services/app_config.dart';
 import '../../services/device_api_service.dart';
+import '../../services/device_webrtc_service.dart';
 import '../../services/mobile_api_service.dart';
 import '../template/template_photo_dialog.dart';
 
@@ -29,6 +31,7 @@ class DeviceLinkPage extends StatefulWidget {
     super.key,
     required this.mobileApiService,
     required this.accessToken,
+    this.initialDeviceApiBaseUrl,
     this.initialTemplate,
     this.initialSessionCode,
     this.entryLabel,
@@ -36,6 +39,7 @@ class DeviceLinkPage extends StatefulWidget {
 
   final MobileApiService mobileApiService;
   final String accessToken;
+  final String? initialDeviceApiBaseUrl;
   final TemplateSummary? initialTemplate;
   final String? initialSessionCode;
   final String? entryLabel;
@@ -76,6 +80,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   static const List<String> _followModes = <String>['shoulders', 'face'];
 
   final DeviceApiService _deviceApiService = const DeviceApiService();
+  final DeviceWebRtcService _deviceWebRtcService = const DeviceWebRtcService();
   late final TextEditingController _baseUrlController;
   late final TextEditingController _streamUrlController;
   late final TextEditingController _sessionCodeController;
@@ -110,6 +115,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Timer? _pollTimer;
   Timer? _persistTimer;
   Timer? _manualMoveRepeatTimer;
+  Timer? _hudMessageTimer;
+  String? _hudMessageTimerKey;
   bool _isManualMoveSending = false;
   String? _activeManualMoveAction;
   Offset? _activeManualMoveVector;
@@ -122,9 +129,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Offset _joystickVector = Offset.zero;
   bool _hasCustomJoystickAnchor = false;
   WebSocket? _mobilePushSocket;
+  DeviceWebRtcSession? _webRtcSession;
   CameraController? _mobilePushCameraController;
   CameraDescription? _mobilePushCamera;
   List<CameraDescription> _mobilePushCameras = const <CameraDescription>[];
+  CameraLensDirection _mobilePushLensDirection = CameraLensDirection.back;
   int _mobilePushRotationDegrees = -1;
   bool _isMobilePushEnabled = false;
   bool _isStartingMobilePush = false;
@@ -147,7 +156,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   void initState() {
     super.initState();
     _baseUrlController = TextEditingController(
-      text: AppConfig.deviceApiBaseUrl,
+      text: widget.initialDeviceApiBaseUrl ?? AppConfig.deviceApiBaseUrl,
     );
     _streamUrlController = TextEditingController(text: _mobilePushStreamUrl);
     _sessionCodeController = TextEditingController(
@@ -168,12 +177,46 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     _stopManualMoveRepeat(refreshStatus: false);
     _pollTimer?.cancel();
     _persistTimer?.cancel();
+    _hudMessageTimer?.cancel();
     _baseUrlController.removeListener(_scheduleDraftPersist);
     _streamUrlController.removeListener(_scheduleDraftPersist);
     _baseUrlController.dispose();
     _streamUrlController.dispose();
     _sessionCodeController.dispose();
     super.dispose();
+  }
+
+  String? _currentHudMessageKey() {
+    if (_errorMessage != null) {
+      return 'error:$_errorMessage';
+    }
+    if (_previewStreamErrorMessage != null) {
+      return 'preview:$_previewStreamErrorMessage';
+    }
+    if (_syncMessage != null) {
+      return 'sync:$_syncMessage';
+    }
+    return null;
+  }
+
+  void _scheduleHudMessageDismiss(String messageKey) {
+    if (_hudMessageTimerKey == messageKey &&
+        _hudMessageTimer?.isActive == true) {
+      return;
+    }
+    _hudMessageTimer?.cancel();
+    _hudMessageTimerKey = messageKey;
+    _hudMessageTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || _currentHudMessageKey() != messageKey) {
+        return;
+      }
+      setState(() {
+        _errorMessage = null;
+        _previewStreamErrorMessage = null;
+        _syncMessage = null;
+        _hudMessageTimerKey = null;
+      });
+    });
   }
 
   Future<void> _runAction(
@@ -210,8 +253,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '设备请求失败，请检查地址、网络和本地运行时服务�?';
-        _addActionRecord('error', '设备请求失败，请检查地址、网络和本地运行时服务�?');
+        _errorMessage = '设备请求失败，请检查地址、网络和本地运行时服务。';
+        _addActionRecord('error', '设备请求失败，请检查地址、网络和本地运行时服务。');
       });
     } finally {
       if (mounted) {
@@ -240,7 +283,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _selectedTemplate = _resolveInitialTemplate(templates);
         _isLoadingTemplates = false;
         if (widget.entryLabel != null) {
-          _syncMessage = '已从 ${widget.entryLabel} 进入设备联动页�?';
+          _syncMessage = '已从 ${widget.entryLabel} 进入设备联动页。';
         }
       });
     } on ApiException catch (error) {
@@ -253,7 +296,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         setState(() {
           _templates = cachedTemplates;
           _selectedTemplate = _resolveInitialTemplate(cachedTemplates);
-          _syncMessage = '模板请求失败，已显示本地缓存模板�?';
+          _syncMessage = '模板请求失败，已显示本地缓存模板。';
           _isLoadingTemplates = false;
         });
         return;
@@ -272,13 +315,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         setState(() {
           _templates = cachedTemplates;
           _selectedTemplate = _resolveInitialTemplate(cachedTemplates);
-          _syncMessage = '模板接口当前不可用，已显示缓存内容�?';
+          _syncMessage = '模板接口当前不可用，已显示缓存内容。';
           _isLoadingTemplates = false;
         });
         return;
       }
       setState(() {
-        _errorMessage = '模板加载失败�?';
+        _errorMessage = '模板加载失败。';
         _isLoadingTemplates = false;
       });
     }
@@ -324,7 +367,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
       setState(() {
         if (!silent) {
-          _errorMessage = '树莓派模板列表加载失败�?';
+          _errorMessage = '树莓派模板列表加载失败。';
         }
         _isLoadingDeviceTemplates = false;
       });
@@ -384,7 +427,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       setState(() {
         _templates = <TemplateSummary>[template, ..._templates];
         _selectedTemplate = template;
-        _syncMessage = '已创建并选中示例模板�?';
+        _syncMessage = '已创建并选中示例模板。';
       });
     } on ApiException catch (error) {
       if (!mounted) {
@@ -398,7 +441,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '示例模板创建失败�?';
+        _errorMessage = '示例模板创建失败。';
       });
     } finally {
       if (mounted) {
@@ -453,7 +496,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '模板创建失败�?';
+        _errorMessage = '模板创建失败。';
       });
     } finally {
       if (mounted) {
@@ -468,7 +511,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     if (_isUploadingDeviceTemplate) {
       return;
     }
-    final draft = await showTemplatePhotoDialog(context, title: '上传树莓派模�?');
+    final draft = await showTemplatePhotoDialog(context, title: '上传树莓派模板');
     if (!mounted || draft == null) {
       return;
     }
@@ -511,7 +554,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '树莓派模板上传失败�?';
+        _errorMessage = '树莓派模板上传失败。';
       });
     } finally {
       if (mounted) {
@@ -528,8 +571,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     final confirmed = await _confirmAction(
-      title: '删除树莓派模�?',
-      message: '确认删除模板${template.name}”吗？删除后需要重新上传图片生成�?',
+      title: '删除树莓派模板',
+      message: '确认删除树莓派模板“${template.name}”吗？删除后需要重新上传图片生成。',
       confirmLabel: '删除',
     );
     if (confirmed != true || !mounted) {
@@ -551,7 +594,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
       setState(() {
         _selectedDeviceTemplate = null;
-        _syncMessage = '树莓派模板已删除�?';
+        _syncMessage = '树莓派模板已删除。';
       });
     } on ApiException catch (error) {
       if (!mounted) {
@@ -565,7 +608,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '树莓派模板删除失败�?';
+        _errorMessage = '树莓派模板删除失败。';
       });
     } finally {
       if (mounted) {
@@ -583,7 +626,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     }
     if (template.isRecommendedDefault) {
       setState(() {
-        _syncMessage = '后台推荐模板不能在手机端删除，如需调整请到管理后台维护�?';
+        _syncMessage = '后台推荐模板不能在手机端删除，如需调整请到管理后台维护。';
       });
       return;
     }
@@ -592,7 +635,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除模板'),
-        content: Text('确认删除模板${template.name}”吗？删除后将无法继续在设备联动页选择它�?'),
+        content: Text('确认删除模板“${template.name}”吗？删除后将无法继续在设备联动页选择它。'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -644,7 +687,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '模板删除失败�?';
+        _errorMessage = '模板删除失败。';
       });
     } finally {
       if (mounted) {
@@ -687,7 +730,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       setState(() {
         _health = health;
       });
-    }, successMessage: '健康检查完成�?');
+    }, successMessage: '健康检查完成。');
   }
 
   Future<void> _runConnectionDiagnostics() async {
@@ -711,19 +754,19 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       } catch (_) {
-        lines.add('Session: 未打开或不可访�?');
+        lines.add('Session: 未打开或不可访问');
       }
 
       try {
         await _deviceApiService.getAiStatus(baseUrl: _baseUrlController.text);
-        lines.add('AI: 可访�?');
+        lines.add('AI: 可访问');
       } catch (_) {
-        lines.add('AI: 会话未打开或不可访�?');
+        lines.add('AI: 会话未打开或不可访问');
       }
 
       lines.add(
         _streamUrlController.text.trim().isEmpty
-            ? 'Stream: 未填�?'
+            ? 'Stream: 未填写'
             : 'Stream: ${_streamUrlController.text.trim()}',
       );
 
@@ -747,7 +790,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
       setState(() {
         _diagnosticMessage = lines.join(' · ');
-        _syncMessage = '连接诊断完成�?';
+        _syncMessage = '连接诊断完成。';
       });
     });
   }
@@ -761,13 +804,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '设备状态已刷新�?');
+    }, successMessage: '设备状态已刷新。');
   }
 
   Future<void> _setOverlayOption(String key, bool value) async {
     if (_status?.sessionOpened != true) {
       setState(() {
-        _errorMessage = '请先打开设备会话，再调整画面辅助显示�?';
+        _errorMessage = '请先打开设备会话，再调整画面辅助显示。';
       });
       return;
     }
@@ -780,13 +823,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '画面辅助显示已更新�?');
+    }, successMessage: '画面辅助显示已更新。');
   }
 
   Future<void> _setGestureOption(String key, bool value) async {
     if (_status?.sessionOpened != true) {
       setState(() {
-        _errorMessage = '请先打开设备会话，再调整手势抓拍�?';
+        _errorMessage = '请先打开设备会话，再调整手势抓拍。';
       });
       return;
     }
@@ -802,7 +845,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           _analyzeCaptureAfterShot = value;
         }
       });
-    }, successMessage: '手势抓拍设置已更新�?');
+    }, successMessage: '手势抓拍设置已更新。');
   }
 
   Future<void> _setCaptureAnalyzeAfterShot(bool value) async {
@@ -844,13 +887,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
       await _refreshHealthSilently();
       await _loadDeviceTemplates(silent: true);
-    }, successMessage: '设备会话已打开�?');
+    }, successMessage: '设备会话已打开。');
   }
 
   Future<void> _closeSession() async {
     final confirmed = await _confirmAction(
       title: '关闭设备会话',
-      message: '关闭后会停止预览、推流和设备控制，确认关闭吗�?',
+      message: '关闭后会停止预览、推流和设备控制，确认关闭吗？',
       confirmLabel: '关闭',
     );
     if (confirmed != true || !mounted) {
@@ -874,18 +917,18 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _sessionCodeController.text = _buildSessionCode();
       });
       await _refreshHealthSilently();
-    }, successMessage: '设备会话已关闭�?');
+    }, successMessage: '设备会话已关闭。');
   }
 
   Future<void> _restartDeviceStream() async {
     if (_status?.sessionOpened != true) {
       setState(() {
-        _errorMessage = '请先打开设备会话，再切换视频流�?';
+        _errorMessage = '请先打开设备会话，再切换视频流。';
       });
       return;
     }
     final confirmed = await _confirmAction(
-      title: '切换视频�?',
+      title: '切换视频流',
       message: '切换视频流会短暂中断预览，确认切换到当前填写的视频流地址吗？',
       confirmLabel: '切换',
     );
@@ -906,7 +949,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       });
       unawaited(_startPreviewStream());
       await _rememberCurrentConnection();
-    }, successMessage: '视频流已切换�?');
+    }, successMessage: '视频流已切换。');
   }
 
   Future<void> _startMobilePush() async {
@@ -921,66 +964,18 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       });
 
       try {
-        if (!Platform.isAndroid) {
-          throw const ApiException('手机画面推送当前优先支�?Android / 安卓模拟器�?');
+        try {
+          await _startMobilePushWebRtc();
+        } catch (error) {
+          await _stopWebRtcSession();
+          await _startLegacyMobilePush();
+          if (mounted) {
+            setState(() {
+              _mobilePushErrorMessage =
+                  'WebRTC 启动失败，已切换到 WebSocket/JPEG fallback：$error';
+            });
+          }
         }
-        if (_mobilePushCameras.isEmpty) {
-          _mobilePushCameras = await availableCameras();
-        }
-        if (_mobilePushCameras.isEmpty) {
-          throw const ApiException('当前设备没有可用摄像头，无法推送画面�?');
-        }
-
-        final camera = _mobilePushCameras.firstWhere(
-          (item) => item.lensDirection == CameraLensDirection.back,
-          orElse: () => _mobilePushCameras.first,
-        );
-        _mobilePushCamera = camera;
-        _mobilePushRotationDegrees = -1;
-        final controller = CameraController(
-          camera,
-          ResolutionPreset.low,
-          enableAudio: false,
-          imageFormatGroup: ImageFormatGroup.nv21,
-        );
-        await controller.initialize();
-        _mobilePushCameraController = controller;
-
-        _streamUrlController.text = _mobilePushStreamUrl;
-        final status = await _deviceApiService.openSession(
-          baseUrl: _baseUrlController.text,
-          sessionCode: _sessionCodeController.text.trim(),
-          streamUrl: _mobilePushStreamUrl,
-        );
-        setState(() {
-          _status = status;
-          _lastStatusUpdatedAt = DateTime.now();
-          _isMobilePushEnabled = true;
-          _mobilePushFrameCount = 0;
-          _lastMobilePushFrameSentAtMs = 0;
-          _lastMobilePushUiUpdateAtMs = 0;
-          _lastMobilePushFrameAt = null;
-        });
-        await _rememberCurrentConnection();
-        unawaited(_startPreviewStream());
-        _mobilePushSocket = await WebSocket.connect(
-          _buildDeviceWebSocketUri('/api/device/stream/mobile-ws').toString(),
-        ).timeout(_mobilePushSocketTimeout);
-        _mobilePushSocket!.listen(
-          (_) {},
-          onError: (_) {
-            if (_isMobilePushEnabled) {
-              _setMobilePushError('手机画面推送连接异常，请检查树莓派地址与网络�?');
-            }
-          },
-          onDone: () {
-            if (_isMobilePushEnabled) {
-              _setMobilePushError('手机画面推送连接已断开�?');
-            }
-          },
-          cancelOnError: false,
-        );
-        await controller.startImageStream(_handleMobilePushFrame);
       } catch (_) {
         await _stopMobilePush(silent: true);
         rethrow;
@@ -991,7 +986,268 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           });
         }
       }
-    }, successMessage: '手机画面推送已启动�?');
+    });
+  }
+
+  Future<void> _startMobilePushWebRtc() async {
+    final camera = await _preferredMobilePushCamera();
+    await _stopPreviewStream();
+    _streamUrlController.text = _mobilePushStreamUrl;
+    final status = await _deviceApiService.openSession(
+      baseUrl: _baseUrlController.text,
+      sessionCode: _sessionCodeController.text.trim(),
+      streamUrl: _mobilePushStreamUrl,
+    );
+    final session = await _deviceWebRtcService.start(
+      baseUrl: _baseUrlController.text,
+      lensDirection: camera.lensDirection,
+      onConnectionState: (RTCPeerConnectionState state) {
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state ==
+                RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+          _setMobilePushError('WebRTC 连接已断开，请检查设备运行时服务和局域网连接。');
+        }
+      },
+    );
+    if (!mounted) {
+      await session.dispose();
+      return;
+    }
+    setState(() {
+      _status = status;
+      _lastStatusUpdatedAt = DateTime.now();
+      _webRtcSession = session;
+      _mobilePushCamera = camera;
+      _mobilePushLensDirection = camera.lensDirection;
+      _isMobilePushEnabled = true;
+      _mobilePushFrameCount = 0;
+      _lastMobilePushFrameSentAtMs = 0;
+      _lastMobilePushUiUpdateAtMs = 0;
+      _lastMobilePushFrameAt = DateTime.now();
+      _latestPreviewFrameBytes = null;
+      _latestPreviewFrameAt = DateTime.now();
+      _syncMessage = '手机画面 WebRTC 推流已启动。';
+      _addActionRecord('system', '手机画面 WebRTC 推流已启动。');
+    });
+    await _rememberCurrentConnection();
+  }
+
+  Future<void> _startLegacyMobilePush() async {
+    if (!Platform.isAndroid) {
+      throw const ApiException('手机 WebSocket fallback 目前仅支持 Android。');
+    }
+    final camera = await _preferredMobilePushCamera();
+    _mobilePushCamera = camera;
+    _mobilePushLensDirection = camera.lensDirection;
+    _mobilePushRotationDegrees = -1;
+    final controller = CameraController(
+      camera,
+      ResolutionPreset.low,
+      enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.nv21,
+    );
+    await controller.initialize();
+    _mobilePushCameraController = controller;
+
+    _streamUrlController.text = _mobilePushStreamUrl;
+    final status = await _deviceApiService.openSession(
+      baseUrl: _baseUrlController.text,
+      sessionCode: _sessionCodeController.text.trim(),
+      streamUrl: _mobilePushStreamUrl,
+    );
+    setState(() {
+      _status = status;
+      _lastStatusUpdatedAt = DateTime.now();
+      _isMobilePushEnabled = true;
+      _mobilePushFrameCount = 0;
+      _lastMobilePushFrameSentAtMs = 0;
+      _lastMobilePushUiUpdateAtMs = 0;
+      _lastMobilePushFrameAt = null;
+    });
+    await _rememberCurrentConnection();
+    unawaited(_startPreviewStream());
+    _mobilePushSocket = await WebSocket.connect(
+      _buildDeviceWebSocketUri('/api/device/stream/mobile-ws').toString(),
+    ).timeout(_mobilePushSocketTimeout);
+    _mobilePushSocket!.listen(
+      (_) {},
+      onError: (_) {
+        if (_isMobilePushEnabled) {
+          _setMobilePushError('手机 WebSocket 推流连接出错，请检查设备运行时地址。');
+        }
+      },
+      onDone: () {
+        if (_isMobilePushEnabled) {
+          _setMobilePushError('手机 WebSocket 推流连接已关闭。');
+        }
+      },
+      cancelOnError: false,
+    );
+    await controller.startImageStream(_handleMobilePushFrame);
+  }
+
+  Future<CameraDescription> _preferredMobilePushCamera() async {
+    if (_mobilePushCameras.isEmpty) {
+      _mobilePushCameras = await availableCameras();
+    }
+    if (_mobilePushCameras.isEmpty) {
+      throw const ApiException('没有找到可用摄像头，请检查系统权限。');
+    }
+    return _findMobilePushCamera(_mobilePushLensDirection) ??
+        _findMobilePushCamera(CameraLensDirection.back) ??
+        _mobilePushCameras.first;
+  }
+
+  CameraDescription? _findMobilePushCamera(CameraLensDirection direction) {
+    for (final camera in _mobilePushCameras) {
+      if (camera.lensDirection == direction) {
+        return camera;
+      }
+    }
+    return null;
+  }
+
+  String _mobilePushLensLabel([CameraLensDirection? direction]) {
+    final lensDirection =
+        direction ??
+        _mobilePushCamera?.lensDirection ??
+        _mobilePushLensDirection;
+    return switch (lensDirection) {
+      CameraLensDirection.front => '前摄',
+      CameraLensDirection.back => '后摄',
+      CameraLensDirection.external => '外接摄像头',
+    };
+  }
+
+  String _mobilePushSwitchTargetLabel() {
+    final currentDirection =
+        _mobilePushCamera?.lensDirection ?? _mobilePushLensDirection;
+    return currentDirection == CameraLensDirection.front ? '切换到后摄' : '切换到前摄';
+  }
+
+  Future<void> _switchMobilePushCamera() async {
+    if (_isStartingMobilePush || _isHandlingMobilePushOrientationChange) {
+      return;
+    }
+
+    if (_webRtcSession != null) {
+      final currentDirection =
+          _mobilePushCamera?.lensDirection ?? _mobilePushLensDirection;
+      _mobilePushLensDirection = currentDirection == CameraLensDirection.front
+          ? CameraLensDirection.back
+          : CameraLensDirection.front;
+      await _runAction(() async {
+        setState(() {
+          _isStartingMobilePush = true;
+          _mobilePushErrorMessage = null;
+        });
+        try {
+          await _stopMobilePush(silent: true);
+          await _startMobilePushWebRtc();
+        } finally {
+          if (mounted) {
+            setState(() {
+              _isStartingMobilePush = false;
+            });
+          }
+        }
+      });
+      return;
+    }
+
+    await _runAction(() async {
+      setState(() {
+        _isStartingMobilePush = true;
+        _mobilePushErrorMessage = null;
+      });
+
+      try {
+        if (!Platform.isAndroid) {
+          throw const ApiException('旧版手机推流切换摄像头仅支持 Android 真机。');
+        }
+        if (_mobilePushCameras.isEmpty) {
+          _mobilePushCameras = await availableCameras();
+        }
+        if (_mobilePushCameras.length < 2) {
+          throw const ApiException('当前设备没有检测到可切换的第二个摄像头。');
+        }
+
+        final currentDirection =
+            _mobilePushCamera?.lensDirection ?? _mobilePushLensDirection;
+        final targetDirection = currentDirection == CameraLensDirection.front
+            ? CameraLensDirection.back
+            : CameraLensDirection.front;
+        CameraDescription? targetCamera = _findMobilePushCamera(
+          targetDirection,
+        );
+        if (targetCamera == null) {
+          for (final camera in _mobilePushCameras) {
+            if (camera.lensDirection != currentDirection) {
+              targetCamera = camera;
+              break;
+            }
+          }
+        }
+        if (targetCamera == null ||
+            targetCamera.lensDirection == currentDirection) {
+          throw const ApiException('没有找到可切换的摄像头。');
+        }
+        final selectedCamera = targetCamera;
+
+        if (!_isMobilePushEnabled) {
+          setState(() {
+            _mobilePushCamera = selectedCamera;
+            _mobilePushLensDirection = selectedCamera.lensDirection;
+          });
+          return;
+        }
+
+        _isPushingMobileFrame = true;
+        final currentController = _mobilePushCameraController;
+        _mobilePushCameraController = null;
+        if (currentController != null) {
+          if (currentController.value.isStreamingImages) {
+            await currentController.stopImageStream();
+          }
+          await currentController.dispose();
+        }
+
+        final nextController = CameraController(
+          selectedCamera,
+          ResolutionPreset.low,
+          enableAudio: false,
+          imageFormatGroup: ImageFormatGroup.nv21,
+        );
+        await nextController.initialize();
+        if (!_isMobilePushEnabled) {
+          await nextController.dispose();
+          return;
+        }
+
+        _mobilePushCameraController = nextController;
+        _mobilePushCamera = selectedCamera;
+        _mobilePushLensDirection = selectedCamera.lensDirection;
+        _mobilePushRotationDegrees = -1;
+        _mobilePushConfigSent = false;
+        _lastMobilePushFrameSentAtMs = 0;
+        _lastMobilePushUiUpdateAtMs = 0;
+        _latestPreviewFrameBytes = null;
+        await nextController.startImageStream(_handleMobilePushFrame);
+        unawaited(_startPreviewStream());
+      } catch (_) {
+        if (_isMobilePushEnabled && _mobilePushCameraController == null) {
+          await _stopMobilePush(silent: true);
+        }
+        rethrow;
+      } finally {
+        _isPushingMobileFrame = false;
+        if (mounted) {
+          setState(() {
+            _isStartingMobilePush = false;
+          });
+        }
+      }
+    }, successMessage: '手机画面推送已启动。');
   }
 
   Future<void> _stopMobilePush({bool silent = false}) async {
@@ -1003,6 +1259,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     _mobilePushRotationDegrees = -1;
     _lastMobilePushFrameSentAtMs = 0;
     _lastMobilePushUiUpdateAtMs = 0;
+
+    await _stopWebRtcSession();
 
     final socket = _mobilePushSocket;
     _mobilePushSocket = null;
@@ -1029,9 +1287,22 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
     if (!silent && mounted) {
       setState(() {
-        _syncMessage = '手机画面推送已停止�?';
-        _addActionRecord('system', '手机画面推送已停止�?');
+        _syncMessage = '手机画面推送已停止。';
+        _addActionRecord('system', '手机画面推送已停止。');
       });
+    }
+  }
+
+  Future<void> _stopWebRtcSession() async {
+    final session = _webRtcSession;
+    _webRtcSession = null;
+    if (session == null) {
+      return;
+    }
+    try {
+      await session.dispose();
+    } catch (_) {
+      // Ignore WebRTC shutdown errors while leaving the page.
     }
   }
 
@@ -1042,6 +1313,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     if (!_isMobilePushEnabled ||
+        _webRtcSession != null ||
         _isStartingMobilePush ||
         _isHandlingMobilePushOrientationChange) {
       return;
@@ -1069,7 +1341,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     if (mounted) {
       setState(() {
         _mobilePushErrorMessage = null;
-        _syncMessage = '屏幕方向已变化，正在校正推流画面。';
+        _syncMessage = '屏幕方向变化，正在重新校正手机推流画面。';
         _latestPreviewFrameBytes = null;
       });
     }
@@ -1105,7 +1377,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
     } catch (_) {
       if (mounted && _isMobilePushEnabled) {
-        _setMobilePushError('屏幕旋转后重新校正推流失败，请停止推流后重新开启。');
+        _setMobilePushError('屏幕方向变化后重新初始化推流失败，请停止后再启动。');
       }
     } finally {
       _isHandlingMobilePushOrientationChange = false;
@@ -1147,7 +1419,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
       final frameBytes = _encodeCameraImageAsNv21(image);
       if (frameBytes == null) {
-        _setMobilePushError('当前相机帧格式暂不支持，请确认使�?Android 摄像头�?');
+        _setMobilePushError('当前相机格式暂不支持旧版推流，请使用 Android NV21 摄像头格式。');
         return;
       }
       socket.add(frameBytes);
@@ -1167,7 +1439,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     } on ApiException catch (error) {
       _setMobilePushError(error.message);
     } catch (_) {
-      _setMobilePushError('手机画面推送失败，请检查摄像头权限与设备网络�?');
+      _setMobilePushError('手机画面推送失败，请检查设备运行时地址和网络连接。');
     } finally {
       _isPushingMobileFrame = false;
     }
@@ -1303,7 +1575,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           _previewSocket = null;
           if (mounted) {
             setState(() {
-              _previewStreamErrorMessage = '实时预览连接异常，已回退到静态预览�?';
+              _previewStreamErrorMessage = '实时预览连接出错，请检查设备运行时地址。';
             });
           }
         },
@@ -1316,7 +1588,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       _previewSocket = null;
       if (mounted) {
         setState(() {
-          _previewStreamErrorMessage = '实时预览连接失败，已回退到静态预览�?';
+          _previewStreamErrorMessage = '实时预览暂时不可用，请确认设备会话已打开。';
         });
       }
     }
@@ -1527,8 +1799,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '手动控制发送失败，请检查设备连接�?';
-        _addActionRecord('error', '手动控制发送失败，请检查设备连接�?');
+        _errorMessage = '云台控制失败，请检查设备连接。';
+        _addActionRecord('error', '云台控制失败，请检查设备连接。');
       });
       _stopManualMoveRepeat();
     } finally {
@@ -1562,8 +1834,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         return;
       }
       setState(() {
-        _errorMessage = '手动控制发送失败，请检查设备连接�?';
-        _addActionRecord('error', '手动控制发送失败，请检查设备连接�?');
+        _errorMessage = '云台控制失败，请检查设备连接。';
+        _addActionRecord('error', '云台控制失败，请检查设备连接。');
       });
       _stopManualMoveRepeat();
     } finally {
@@ -1581,7 +1853,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '模式已更新�?');
+    }, successMessage: '模式已更新。');
   }
 
   Future<void> _home() async {
@@ -1593,7 +1865,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '云台已回中�?');
+    }, successMessage: '云台已回中。');
   }
 
   Future<void> _setFollowMode(String followMode) async {
@@ -1606,7 +1878,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '跟随模式已更新�?');
+    }, successMessage: '跟随模式已更新。');
   }
 
   Future<void> _pushTemplate() async {
@@ -1629,7 +1901,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final template = _selectedTemplate;
     if (template == null) {
       setState(() {
-        _errorMessage = '请先选择树莓派模板；兼容旧模板时也可以选择手机端模板�?';
+        _errorMessage = _errorMessage = '请先选择模板，再下发到设备。';
       });
       return;
     }
@@ -1644,7 +1916,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '模板已下发到设备�?');
+    }, successMessage: '模板已下发到设备。');
   }
 
   Future<void> _clearDeviceTemplateSelection() async {
@@ -1659,7 +1931,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _selectedTemplate = null;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '模板构图已关闭�?');
+    }, successMessage: '模板构图已关闭。');
   }
 
   Future<void> _applyAngleSuggestion() async {
@@ -1673,7 +1945,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: 'AI 角度建议已应用�?');
+    }, successMessage: 'AI 角度建议已应用。');
   }
 
   Future<void> _applyLockSuggestion() async {
@@ -1689,18 +1961,18 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: 'AI 锁机位建议已应用�?');
+    }, successMessage: 'AI 锁机位建议已应用。');
   }
 
   Future<void> _startAngleSearch() async {
     if (_status?.aiStatus.hasRunningTask == true) {
       setState(() {
-        _syncMessage = 'AI 任务正在运行，请等待当前任务结束�?';
+        _syncMessage = _errorMessage = 'AI 任务正在运行，请等待当前任务完成。';
       });
       return;
     }
     final config = await _showAiScanConfigDialog(
-      title: 'AI 自动找角�?',
+      title: 'AI 自动找角度',
       includeDelay: false,
     );
     if (!mounted || config == null) {
@@ -1717,18 +1989,18 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         settleSeconds: config.settleSeconds,
       );
       await _refreshStatusSilently();
-    }, successMessage: 'AI 自动找角度已启动�?');
+    }, successMessage: 'AI 自动找角度已启动。');
   }
 
   Future<void> _startBackgroundLock() async {
     if (_status?.aiStatus.hasRunningTask == true) {
       setState(() {
-        _syncMessage = 'AI 任务正在运行，请等待当前任务结束�?';
+        _syncMessage = _errorMessage = 'AI 任务正在运行，请等待当前任务完成。';
       });
       return;
     }
     final config = await _showAiScanConfigDialog(
-      title: '背景分析并锁定机�?',
+      title: '背景分析并锁定机位',
       includeDelay: true,
     );
     if (!mounted || config == null) {
@@ -1746,7 +2018,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         delaySeconds: config.delaySeconds,
       );
       await _refreshStatusSilently();
-    }, successMessage: '背景扫描锁定已启动�?');
+    }, successMessage: '背景扫描锁定已启动。');
   }
 
   Future<void> _unlockBackgroundLock() async {
@@ -1755,7 +2027,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         baseUrl: _baseUrlController.text,
       );
       await _refreshStatusSilently();
-    }, successMessage: 'AI 锁机位已解除�?');
+    }, successMessage: 'AI 锁机位已解除。');
   }
 
   Future<_AiScanConfig?> _showAiScanConfigDialog({
@@ -1785,7 +2057,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           _errorMessage = captureResult.analysisError;
         }
       });
-    }, successMessage: '设备抓拍已触发�?');
+    }, successMessage: '设备抓拍已触发。');
   }
 
   Future<void> _applyLatestBackendAiLock() async {
@@ -1794,7 +2066,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         accessToken: widget.accessToken,
       );
       if (captures.isEmpty) {
-        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍�?');
+        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍。');
       }
 
       final latestCapture = _pickLatestCapture(captures);
@@ -1805,14 +2077,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       );
 
       if (task.status != 'succeeded') {
-        throw ApiException(task.errorMessage ?? '后端 AI 锁机位任务失败，已阻止下发到设备�?');
+        throw ApiException(task.errorMessage ?? '后端 AI 锁机位任务失败，已阻止下发到设备。');
       }
 
       final targetBoxNorm = task.targetBoxNorm;
       final panDelta = task.recommendedPanDelta;
       final tiltDelta = task.recommendedTiltDelta;
       if (targetBoxNorm == null || panDelta == null || tiltDelta == null) {
-        throw const ApiException('后端 AI 任务没有返回完整的锁机位数据�?');
+        throw const ApiException('后端 AI 任务没有返回完整的锁机位数据。');
       }
 
       final status = await _deviceApiService.applyLock(
@@ -1820,7 +2092,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         recommendedPanDelta: panDelta,
         recommendedTiltDelta: tiltDelta,
         targetBoxNorm: targetBoxNorm,
-        summary: task.resultSummary ?? '应用后端 AI 锁机位建议�?',
+        summary: task.resultSummary ?? '应用后端 AI 锁机位建议。',
         score: (task.resultScore ?? 90).toDouble(),
       );
 
@@ -1829,7 +2101,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _lastBackendAiTask = task;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '最新后�?AI 锁机位任务已下发到设备�?');
+    }, successMessage: '最新后端 AI 锁机位任务已下发到设备。');
   }
 
   Future<void> _applyLatestBackendAiAngle() async {
@@ -1838,7 +2110,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         accessToken: widget.accessToken,
       );
       if (captures.isEmpty) {
-        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍�?');
+        throw const ApiException('后端里还没有抓拍记录，请先在手机拍照页完成一次抓拍。');
       }
 
       final latestCapture = _pickLatestCapture(captures);
@@ -1849,20 +2121,20 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       );
 
       if (task.status != 'succeeded') {
-        throw ApiException(task.errorMessage ?? '后端 AI 角度任务失败，已阻止下发到设备�?');
+        throw ApiException(task.errorMessage ?? '后端 AI 角度任务失败，已阻止下发到设备。');
       }
 
       final panDelta = task.recommendedPanDelta;
       final tiltDelta = task.recommendedTiltDelta;
       if (panDelta == null || tiltDelta == null) {
-        throw const ApiException('后端 AI 任务没有返回完整的角度调整数据�?');
+        throw const ApiException('后端 AI 任务没有返回完整的角度调整数据。');
       }
 
       final status = await _deviceApiService.applyAngle(
         baseUrl: _baseUrlController.text,
         recommendedPanDelta: panDelta,
         recommendedTiltDelta: tiltDelta,
-        summary: task.resultSummary ?? '应用后端 AI 角度建议�?',
+        summary: task.resultSummary ?? '应用后端 AI 角度建议。',
         score: (task.resultScore ?? 88).toDouble(),
       );
 
@@ -1871,7 +2143,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _lastBackendAiTask = task;
         _lastStatusUpdatedAt = DateTime.now();
       });
-    }, successMessage: '最新后�?AI 角度任务已下发到设备�?');
+    }, successMessage: '最新后端 AI 角度任务已下发到设备。');
   }
 
   List<double> _resolveTargetBoxNorm() {
@@ -2093,7 +2365,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           return;
         }
         setState(() {
-          _errorMessage = '自动刷新失败，请手动点击状态刷新后重试�?';
+          _errorMessage = '自动刷新状态失败，请检查设备连接。';
         });
       }
     });
@@ -2103,9 +2375,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     setState(() {
       _autoRefreshEnabled = value;
       if (!value) {
-        _syncMessage = '自动刷新已暂停�?';
+        _syncMessage = '自动刷新已暂停。';
       } else {
-        _syncMessage = '自动刷新已开启�?';
+        _syncMessage = '自动刷新已开启。';
       }
     });
     _persistDraftConfig();
@@ -2186,7 +2458,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       ? Stack(
                           fit: StackFit.expand,
                           children: <Widget>[
-                            if (_latestPreviewFrameBytes != null)
+                            if (_webRtcSession != null)
+                              _buildWebRtcPreview()
+                            else if (_latestPreviewFrameBytes != null)
                               Image.memory(
                                 _latestPreviewFrameBytes!,
                                 fit: BoxFit.cover,
@@ -2209,7 +2483,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                                       return const _PreviewEmptyState(
                                         icon: Icons.camera_outdoor_outlined,
                                         title: '正在加载设备画面',
-                                        description: '已打开设备会话，正在尝试连接实时预览�?',
+                                        description: '已打开设备会话，正在连接实时预览。',
                                       );
                                     },
                                 errorBuilder:
@@ -2223,7 +2497,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                                             Icons.wifi_tethering_error_rounded,
                                         title: '暂时无法显示设备画面',
                                         description:
-                                            '实时预览或静态预览暂不可用。请确认设备会话已打开，并检查手机画面推送是否正在运行�?',
+                                            '实时预览或静态预览暂不可用。请确认设备会话已打开，并检查手机画面推送是否正在运行。',
                                       );
                                     },
                               ),
@@ -2240,9 +2514,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
-                                  _latestPreviewFrameAt == null
-                                      ? '静态预�?'
-                                      : '实时预览 ${_formatClock(_latestPreviewFrameAt!)}',
+                                  _webRtcSession != null
+                                      ? 'WebRTC 预览'
+                                      : _latestPreviewFrameAt == null
+                                      ? '等待预览'
+                                      : '预览 ',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
@@ -2255,7 +2531,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       : const _PreviewEmptyState(
                           icon: Icons.videocam_off_outlined,
                           title: '等待打开设备会话',
-                          description: '会话打开后，这里会显示设备返回的最新预览帧，方便你先看画面，再做控制�?',
+                          description: '会话打开后，这里会显示设备返回的画面。',
                         ),
                 ),
               ),
@@ -2432,7 +2708,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       _baseUrlController.text = preset.baseUrl;
       _streamUrlController.text = preset.streamUrl;
       _sessionCodeController.text = _buildSessionCode();
-      _syncMessage = '已载入最近连接配置�?';
+      _syncMessage = '已载入最近连接配置。';
     });
     _persistDraftConfig();
   }
@@ -2445,7 +2721,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     }
     setState(() {
       _recentConnections = const <_DeviceConnectionPreset>[];
-      _syncMessage = '最近连接记录已清空�?';
+      _syncMessage = '最近连接记录已清空。';
     });
   }
 
@@ -2467,22 +2743,22 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   String _statusHeadline() {
     if (_status?.sessionOpened == true) {
-      return '设备会话运行�?';
+      return '设备会话运行中。';
     }
     if (_health != null) {
-      return '设备服务可访�?';
+      return '设备服务可访问。';
     }
     return '等待连接设备';
   }
 
   String _statusDescription() {
     if (_status?.sessionOpened == true) {
-      return '当前会话 ${_status?.sessionCode ?? '-'} 已打开，可继续执行控制、模板下发和 AI 动作�?';
+      return '当前会话  已打开，可继续执行控制、模板下发和 AI 动作。';
     }
     if (_health != null) {
-      return '本地设备运行时已启动，但当前还没有打开设备会话�?';
+      return '本地设备运行时已启动，但当前还没有打开设备会话。';
     }
-    return '先填写设备地址和视频流地址，再执行健康检查或打开会话�?';
+    return '先填写设备地址和视频流地址，再执行健康检查或打开会话。';
   }
 
   Widget _buildStatusOverviewSection(BuildContext context) {
@@ -2533,7 +2809,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 active: true,
               ),
             _StatusPill(
-              label: 'AI ???',
+              label: 'AI ?',
               value: _status?.aiLockEnabled == true ? '??' : '??',
               active: _status?.aiLockEnabled == true,
             ),
@@ -2551,8 +2827,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                   _health?.sessionCode ??
                   _sessionCodeController.text.trim(),
             ),
-            _SummaryLine(label: '????', value: _formatUpdatedAt()),
-            _SummaryLine(label: '????', value: _status?.followMode ?? '???'),
+            _SummaryLine(label: '最近刷新', value: _formatUpdatedAt()),
+            _SummaryLine(label: '跟随模式', value: _status?.followMode ?? '未设置'),
           ],
         ),
       ],
@@ -2562,8 +2838,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Widget _buildPreviewPlaceholderSection(BuildContext context) {
     final hasSession = _status?.sessionOpened == true;
     final description = hasSession
-        ? '当前会话已经打开。下一阶段会在这里接入设备画面预览；现在先用状态回显和控制链路确认联动正常�?'
-        : '会话未打开时，这里显示设备画面预览的空状态。先打开会话，后续再接入真实预览能力�?';
+        ? '当前会话已经打开，预览画面会在这里显示。'
+        : '会话未打开时，这里显示设备画面预览的空状态。请先打开会话。';
 
     return Card(
       child: Padding(
@@ -2601,7 +2877,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          hasSession ? '预览区占位已准备' : '等待打开设备会话',
+                          hasSession ? '设备画面准备中' : '等待打开设备会话',
                           style: Theme.of(context).textTheme.titleSmall
                               ?.copyWith(
                                 fontWeight: FontWeight.w800,
@@ -2687,7 +2963,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
               child: FilledButton.tonalIcon(
                 onPressed: _isBusy ? null : _checkHealth,
                 icon: const Icon(Icons.health_and_safety_outlined),
-                label: const Text('健康检�?'),
+                label: const Text('健康检查'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -2702,7 +2978,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
               child: FilledButton.tonalIcon(
                 onPressed: _isBusy ? null : _fetchStatus,
                 icon: const Icon(Icons.radar_outlined),
-                label: const Text('刷新状�?'),
+                label: const Text('刷新状态'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -2754,8 +3030,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         ? '-'
         : _formatClock(_lastMobilePushFrameAt!);
     final description = _isMobilePushEnabled
-        ? '已推�?$_mobilePushFrameCount 帧，最近一�?$lastFrame�?'
-        : '使用当前 Android 摄像头向树莓派推�?WebSocket 视频帧，树莓派会�?mobile_push 作为视频源�?';
+        ? (_webRtcSession != null
+              ? 'WebRTC 推流中，最近预览 $lastFrame。'
+              : 'WebSocket fallback 推流中，已发送 $_mobilePushFrameCount 帧，最近 $lastFrame。')
+        : '优先使用 WebRTC 推送手机摄像头，失败时自动回退到 WebSocket/JPEG fallback。';
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -2781,7 +3059,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '手机画面推�?',
+                    '手机画面推送',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
@@ -2808,6 +3086,29 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 color: const Color(0xFF6E6558),
                 height: 1.35,
               ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                _StatusPill(
+                  label: '摄像头',
+                  value: _mobilePushLensLabel(),
+                  active: _isMobilePushEnabled,
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      _isBusy ||
+                          _isStartingMobilePush ||
+                          _isHandlingMobilePushOrientationChange
+                      ? null
+                      : () => unawaited(_switchMobilePushCamera()),
+                  icon: const Icon(Icons.cameraswitch_outlined),
+                  label: Text(_mobilePushSwitchTargetLabel()),
+                ),
+              ],
             ),
             if (_mobilePushErrorMessage != null) ...<Widget>[
               const SizedBox(height: 8),
@@ -2985,7 +3286,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Widget _buildAiActionSummary(BuildContext context) {
     if (_lastCapturePath == null && _lastBackendAiTask == null) {
       return Text(
-        '当前还没�?AI 执行记录，可直接触发抓拍或应用后端结果�?',
+        '当前还没有 AI 执行记录，可直接触发抓拍或应用后端结果。',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: const Color(0xFF6A6258),
           height: 1.4,
@@ -3016,7 +3317,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           ),
           const SizedBox(height: 4),
           Text(
-            '?????${_lastBackendAiTask!.resultSummary ?? '-'}',
+            '任务结果：',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: const Color(0xFF6A6258),
               height: 1.4,
@@ -3034,8 +3335,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _buildModeGroup(
           context: context,
           title: '运行模式',
-          summary: '???${_modeDisplayLabel(_status?.mode ?? 'MANUAL')}',
-          description: '选择设备当前的控制方式�?',
+          summary: '当前：',
+          description: '选择设备当前的控制方式。',
           initiallyExpanded: true,
           children: _modes
               .map(
@@ -3051,9 +3352,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _buildModeGroup(
           context: context,
           title: '跟随模式',
-          summary:
-              '???${_status?.followMode == null ? '???' : _followModeDisplayLabel(_status!.followMode!)}',
-          description: '选择自动跟随时优先识别的目标区域�?',
+          summary: '当前：',
+          description: '选择跟随肩部或人脸作为自动构图参考。',
           children: _followModes
               .map(
                 (mode) => _ModeChip(
@@ -3069,9 +3369,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           context: context,
           title: 'AI 功能',
           summary: _lastBackendAiTask == null
-              ? '包含抓拍、示�?AI、后�?AI 下发'
+              ? '暂无任务'
               : '最近任务：${_lastBackendAiTask!.status}',
-          description: '集中执行抓拍、示�?AI 动作，以及应用后端返回的 AI 结果�?',
+          description: '抓拍、找角度和背景锁定集中在这里。',
           children: <Widget>[
             FilledButton.tonalIcon(
               onPressed: _isBusy ? null : _applyAngleSuggestion,
@@ -3081,7 +3381,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             FilledButton.tonalIcon(
               onPressed: _isBusy ? null : _applyLockSuggestion,
               icon: const Icon(Icons.lock_outline),
-              label: const Text('应用示例锁机�?'),
+              label: const Text('应用示例锁机位'),
             ),
             FilledButton.icon(
               onPressed: _isBusy ? null : _triggerCapture,
@@ -3091,7 +3391,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             FilledButton.tonalIcon(
               onPressed: _isBusy ? null : _applyLatestBackendAiLock,
               icon: const Icon(Icons.cloud_sync_outlined),
-              label: const Text('应用后端 AI 锁机�?'),
+              label: const Text('应用后端 AI 锁机位'),
             ),
             FilledButton.tonalIcon(
               onPressed: _isBusy ? null : _applyLatestBackendAiAngle,
@@ -3110,7 +3410,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          '连接参数会自动保存在本机。修改后可直接回到上方“手动控制”区执行健康检查或打开会话�?',
+          '连接参数会自动保存在本机。修改后可直接回到上方手动控制区域执行健康检查或打开会话。',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             height: 1.5,
             color: const Color(0xFF5A6B70),
@@ -3140,7 +3440,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  '最近连�?',
+                  '最近连接',
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
@@ -3174,10 +3474,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      '${preset.streamUrl} · ${_formatDateTime(preset.updatedAt)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    Text(' · ', style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -3196,7 +3493,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           children: <Widget>[
             Expanded(
               child: Text(
-                _selectedTemplate == null ? '模板（可选）' : '模板（已选择�?',
+                _selectedTemplate == null ? '模板（可选）' : '模板（已选择）',
                 style: Theme.of(
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
@@ -3227,10 +3524,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       : () {
                           setState(() {
                             _selectedTemplate = null;
-                            _syncMessage = '已取消模板选择�?';
+                            _syncMessage = '已取消模板选择。';
                           });
                         },
-                  child: const Text('不使用模�?'),
+                  child: const Text('不使用模板'),
                 ),
                 TextButton(
                   onPressed: _isDeletingTemplate
@@ -3253,7 +3550,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           const LinearProgressIndicator(minHeight: 3),
         ] else if (_templates.isEmpty) ...<Widget>[
           const SizedBox(height: 10),
-          const Text('还没有模板，可以先新增一个模板�?'),
+          const Text('还没有模板，可以先新增一个模板。'),
         ] else ...<Widget>[
           const SizedBox(height: 10),
           Wrap(
@@ -3261,14 +3558,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             runSpacing: 10,
             children: <Widget>[
               _ModeChip(
-                label: '不使用模�?',
+                label: '不使用模板',
                 selected: _selectedTemplate == null,
                 onTap: _isBusy
                     ? null
                     : () {
                         setState(() {
                           _selectedTemplate = null;
-                          _syncMessage = '已取消模板选择�?';
+                          _syncMessage = '已取消模板选择。';
                         });
                       },
               ),
@@ -3320,8 +3617,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         ),
         Text(
           _autoRefreshEnabled
-              ? '当设备会话处于打开状态时，页面会�?3 秒自动刷新一次�?'
-              : '自动刷新已暂停，请手动点击“刷新状态”或执行任意控制动作更新页面�?',
+              ? '当设备会话处于打开状态时，页面会每 3 秒自动刷新一次。'
+              : '自动刷新已暂停，请手动点击刷新状态或执行任意控制动作更新页面。',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.5),
         ),
         const SizedBox(height: 12),
@@ -3336,7 +3633,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             ),
             _StatusPill(
               label: '会话',
-              value: _status?.sessionOpened == true ? '已打开' : '已关�?',
+              value: _status?.sessionOpened == true ? '已打开' : '已关闭',
               active: _status?.sessionOpened == true,
             ),
             if (_status?.selectedTemplateId != null)
@@ -3346,8 +3643,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 active: true,
               ),
             _StatusPill(
-              label: 'AI 锁机�?',
-              value: _status?.aiLockEnabled == true ? '开�?' : '关闭',
+              label: 'AI 锁机位',
+              value: _status?.aiLockEnabled == true ? '开启' : '关闭',
               active: _status?.aiLockEnabled == true,
             ),
           ],
@@ -3358,15 +3655,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   Widget _buildCaptureRecordsContent(BuildContext context) {
     if (_captureRecords.isEmpty) {
-      return const Text('还没有设备抓拍记录�?');
+      return const Text('还没有设备抓拍记录。');
     }
     return Column(
       children: _captureRecords
           .map(
             (record) => _TimelineTile(
               title: _captureDisplayName(record.path),
-              subtitle:
-                  '${_captureSourceLabel(record.source)} · ${_formatDateTime(record.createdAt)}',
+              subtitle: ' · ',
               accentColor: const Color(0xFF3A7D44),
             ),
           )
@@ -3376,15 +3672,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   Widget _buildActionTimelineContent(BuildContext context) {
     if (_actionRecords.isEmpty) {
-      return const Text('还没有设备操作记录�?');
+      return const Text('还没有设备操作记录。');
     }
     return Column(
       children: _actionRecords
           .map(
             (record) => _TimelineTile(
               title: record.message,
-              subtitle:
-                  '${_actionCategoryLabel(record.category)} · ${_formatDateTime(record.createdAt)}',
+              subtitle: ' · ',
               accentColor: record.category == 'error'
                   ? const Color(0xFF9E2A2B)
                   : const Color(0xFF0D5C63),
@@ -3396,7 +3691,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   Widget _buildHealthResultContent() {
     if (_health == null) {
-      return const Text('还没有健康检查结果�?');
+      return const Text('还没有健康检查结果。');
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3414,7 +3709,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   Widget _buildRuntimeStatusContent() {
     if (_status == null) {
-      return const Text('还没有加载运行状态�?');
+      return const Text('还没有加载运行状态。');
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3441,9 +3736,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         const SizedBox(height: 6),
         Text('AI 锁机位开启：${_status!.aiLockEnabled}'),
         const SizedBox(height: 6),
-        Text('AI 锁机位拟合分${_status!.aiLockFitScore.toStringAsFixed(2)}'),
+        Text('AI 锁机位拟合分：'),
         const SizedBox(height: 6),
-        Text('AI 锁机位目标框${_status!.aiLockTargetBoxNorm?.join(', ') ?? ' - '}'),
+        Text('AI 锁机位目标框：'),
       ],
     );
   }
@@ -3454,6 +3749,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
     if (!hasSession) {
       preview = const _HudEmptyPreview();
+    } else if (_webRtcSession != null) {
+      preview = _buildWebRtcPreview();
     } else if (_latestPreviewFrameBytes != null) {
       preview = Image.memory(
         _latestPreviewFrameBytes!,
@@ -3472,14 +3769,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           return const _HudEmptyPreview(
             icon: Icons.camera_outdoor_outlined,
             title: '正在加载设备画面',
-            description: '已打开设备会话，正在连接实时预览�?',
+            description: '已打开设备会话，正在连接实时预览。',
           );
         },
         errorBuilder: (context, error, stackTrace) {
           return const _HudEmptyPreview(
             icon: Icons.wifi_tethering_error_rounded,
             title: '暂时无法显示设备画面',
-            description: '请检查会话、视频流地址或手机画面推送�?',
+            description: '请检查会话、视频流地址或手机画面推送。',
           );
         },
       );
@@ -3577,7 +3874,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             const SizedBox(width: 8),
             Text(
               _latestPreviewFrameAt == null
-                  ? '静态预�?'
+                  ? '静态预览'
                   : '实时 ${_formatClock(_latestPreviewFrameAt!)}',
               style: const TextStyle(
                 color: Colors.white,
@@ -3592,6 +3889,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Widget _buildHudMessages(BuildContext context, {required bool isLandscape}) {
+    final messageKey = _currentHudMessageKey();
+    if (messageKey == null) {
+      _hudMessageTimer?.cancel();
+      _hudMessageTimerKey = null;
+    } else {
+      _scheduleHudMessageDismiss(messageKey);
+    }
     if (_isHudHidden) {
       return const SizedBox.shrink();
     }
@@ -4025,7 +4329,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                             setState(() {
                               _selectedDeviceTemplate = template;
                               _selectedTemplate = null;
-                              _syncMessage = '已选择树莓派模板：${template.name}';
+                              _syncMessage = '已选择树莓派模板：';
                             });
                           },
                   ),
@@ -4043,16 +4347,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         aiStatus.lastAngleSearchError ?? aiStatus.lastBackgroundLockError;
     final lastResult =
         aiStatus.lastAngleSearchResult ?? aiStatus.lastBackgroundLockResult;
-    final score = aiStatus.lockFitScore > 0
-        ? ' · 锁定分数 ${aiStatus.lockFitScore.toStringAsFixed(1)}'
-        : '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _HudPanelHeader(
           title: 'AI 功能',
-          subtitle: isRunning ? 'AI 正在扫描，请等待结果。' : '抓拍、找角度和背景锁定集中在这里。$score',
+          subtitle: isRunning ? 'AI 正在扫描，请等待结果。' : '抓拍、找角度和背景锁定集中在这里。',
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -4384,7 +4685,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
               active: _status?.aiLockEnabled == true,
             ),
             _HudStatusBadge(
-              label: '推流 $_mobilePushFrameCount 帧',
+              label: _webRtcSession != null
+                  ? 'WebRTC 推流'
+                  : 'WebSocket $_mobilePushFrameCount 帧',
               active: _isMobilePushEnabled,
             ),
           ],
@@ -4453,6 +4756,16 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                         unawaited(_startMobilePush());
                       }
                     },
+            ),
+            _HudActionChip(
+              icon: Icons.cameraswitch_outlined,
+              label: _mobilePushSwitchTargetLabel(),
+              onTap:
+                  _isBusy ||
+                      _isStartingMobilePush ||
+                      _isHandlingMobilePushOrientationChange
+                  ? null
+                  : () => unawaited(_switchMobilePushCamera()),
             ),
             _HudActionChip(
               icon: Icons.swap_horiz_outlined,
@@ -4700,6 +5013,17 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildWebRtcPreview() {
+    final session = _webRtcSession;
+    if (session == null) {
+      return const SizedBox.shrink();
+    }
+    return RTCVideoView(
+      session.remoteRenderer,
+      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
 }
@@ -4981,7 +5305,7 @@ class _HudEmptyPreview extends StatelessWidget {
   const _HudEmptyPreview({
     this.icon = Icons.videocam_off_outlined,
     this.title = '等待打开设备会话',
-    this.description = '会话打开后，这里会显示设备返回的画面�?',
+    this.description = '会话打开后，这里会显示设备返回的画面。',
   });
 
   final IconData icon;
@@ -5409,7 +5733,7 @@ class _SummaryLine extends StatelessWidget {
         ),
         children: <InlineSpan>[
           TextSpan(
-            text: '$label�?',
+            text: '$label：',
             style: const TextStyle(fontWeight: FontWeight.w700),
           ),
           TextSpan(text: value),
@@ -5553,7 +5877,7 @@ class _AiScanConfigDialogState extends State<_AiScanConfigDialog> {
         maxCandidates == null ||
         settleSeconds == null) {
       setState(() {
-        _errorMessage = '请填写有效数字�?';
+        _errorMessage = '请填写有效数字。';
       });
       return;
     }
@@ -5566,7 +5890,7 @@ class _AiScanConfigDialogState extends State<_AiScanConfigDialog> {
         settleSeconds < 0.1 ||
         delaySeconds < 0) {
       setState(() {
-        _errorMessage = '参数超出树莓派允许范围，请调小或恢复默认值�?';
+        _errorMessage = '参数超出树莓派允许范围，请调小或恢复默认值。';
       });
       return;
     }
