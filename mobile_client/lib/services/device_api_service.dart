@@ -6,7 +6,49 @@ import 'package:http/http.dart' as http;
 
 import '../models/device_health_summary.dart';
 import '../models/device_status_summary.dart';
+import '../models/device_template_summary.dart';
 import 'api_client.dart';
+
+class DeviceCaptureTriggerResult {
+  const DeviceCaptureTriggerResult({
+    required this.path,
+    this.analysis,
+    this.analysisError,
+  });
+
+  final String path;
+  final Map<String, dynamic>? analysis;
+  final String? analysisError;
+}
+
+class DeviceCaptureFileSummary {
+  const DeviceCaptureFileSummary({
+    required this.path,
+    required this.filename,
+    this.relativePath,
+    this.sizeBytes,
+    this.modifiedAt,
+  });
+
+  final String path;
+  final String filename;
+  final String? relativePath;
+  final int? sizeBytes;
+  final DateTime? modifiedAt;
+
+  factory DeviceCaptureFileSummary.fromJson(Map<String, dynamic> json) {
+    final modifiedAtRaw = json['modified_at'] as String?;
+    return DeviceCaptureFileSummary(
+      path: json['path'] as String? ?? '',
+      filename: json['filename'] as String? ?? 'device_capture.jpg',
+      relativePath: json['relative_path'] as String?,
+      sizeBytes: (json['size_bytes'] as num?)?.toInt(),
+      modifiedAt: modifiedAtRaw == null
+          ? null
+          : DateTime.tryParse(modifiedAtRaw)?.toLocal(),
+    );
+  }
+}
 
 class DeviceApiService {
   const DeviceApiService();
@@ -20,6 +62,27 @@ class DeviceApiService {
 
   Future<DeviceStatusSummary> getStatus({required String baseUrl}) async {
     final data = await _getJson(baseUrl, '/api/device/status');
+    return DeviceStatusSummary.fromJson(data);
+  }
+
+  Future<DeviceAiStatusSummary> getAiStatus({required String baseUrl}) async {
+    final data = await _getJson(baseUrl, '/api/device/ai/status');
+    return DeviceAiStatusSummary.fromJson(data);
+  }
+
+  Future<DeviceStatusSummary> updateDeviceConfig({
+    required String baseUrl,
+    Map<String, bool>? overlay,
+    Map<String, bool>? gesture,
+  }) async {
+    final body = <String, dynamic>{};
+    if (overlay != null) {
+      body['overlay'] = overlay;
+    }
+    if (gesture != null) {
+      body['gesture'] = gesture;
+    }
+    final data = await _patchJson(baseUrl, '/api/device/config', body);
     return DeviceStatusSummary.fromJson(data);
   }
 
@@ -121,16 +184,147 @@ class DeviceApiService {
     return getStatus(baseUrl: baseUrl);
   }
 
+  Future<DeviceStatusSummary> restartStream({
+    required String baseUrl,
+    required String streamUrl,
+  }) async {
+    await _postJson(baseUrl, '/api/device/stream/start', <String, dynamic>{
+      'stream_url': streamUrl,
+    });
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<List<DeviceTemplateSummary>> listDeviceTemplates({
+    required String baseUrl,
+  }) async {
+    final data = await _getJson(baseUrl, '/api/device/templates');
+    final items = data['items'] as List<dynamic>? ?? const <dynamic>[];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(DeviceTemplateSummary.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<DeviceTemplateSummary> uploadDeviceTemplate({
+    required String baseUrl,
+    required File file,
+    required String name,
+    bool selectAfterImport = true,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${_normalizeBaseUrl(baseUrl)}/api/device/templates/upload'),
+    );
+    request.headers['Accept'] = 'application/json';
+    request.fields['name'] = name;
+    request.fields['select_after_import'] = selectAfterImport.toString();
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        'file',
+        file.path,
+        filename: file.uri.pathSegments.isEmpty
+            ? 'template.jpg'
+            : file.uri.pathSegments.last,
+      ),
+    );
+
+    final response = await _send(() async {
+      final streamed = await request.send();
+      return http.Response.fromStream(streamed);
+    });
+    return DeviceTemplateSummary.fromJson(_decodeEnvelope(response));
+  }
+
+  Future<void> deleteDeviceTemplate({
+    required String baseUrl,
+    required String templateId,
+  }) async {
+    await _deleteJson(
+      baseUrl,
+      '/api/device/templates/${Uri.encodeComponent(templateId)}',
+    );
+  }
+
   Future<DeviceStatusSummary> selectTemplate({
     required String baseUrl,
-    required int templateId,
-    required Map<String, dynamic> templateData,
+    required Object templateId,
+    Map<String, dynamic>? templateData,
   }) async {
     await _postJson(baseUrl, '/api/device/templates/select', <String, dynamic>{
       'template_id': templateId,
       'template_data': templateData,
     });
     return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> clearTemplate({required String baseUrl}) async {
+    await _postJson(
+      baseUrl,
+      '/api/device/templates/clear',
+      <String, dynamic>{},
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceAiStatusSummary> startAngleSearch({
+    required String baseUrl,
+    double panRange = 6,
+    double tiltRange = 3,
+    double panStep = 4,
+    double tiltStep = 3,
+    int maxCandidates = 5,
+    double settleSeconds = 0.5,
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/ai/angle-search/start',
+      <String, dynamic>{
+        'pan_range': panRange,
+        'tilt_range': tiltRange,
+        'pan_step': panStep,
+        'tilt_step': tiltStep,
+        'max_candidates': maxCandidates,
+        'settle_s': settleSeconds,
+      },
+    );
+    return DeviceAiStatusSummary.fromJson(data);
+  }
+
+  Future<DeviceAiStatusSummary> startBackgroundLock({
+    required String baseUrl,
+    double panRange = 6,
+    double tiltRange = 3,
+    double panStep = 4,
+    double tiltStep = 3,
+    int maxCandidates = 5,
+    double settleSeconds = 0.5,
+    double delaySeconds = 0,
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/ai/background-lock/start',
+      <String, dynamic>{
+        'pan_range': panRange,
+        'tilt_range': tiltRange,
+        'pan_step': panStep,
+        'tilt_step': tiltStep,
+        'max_candidates': maxCandidates,
+        'settle_s': settleSeconds,
+        'delay_s': delaySeconds,
+      },
+    );
+    return DeviceAiStatusSummary.fromJson(data);
+  }
+
+  Future<DeviceAiStatusSummary> unlockBackgroundLock({
+    required String baseUrl,
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/ai/background-lock/unlock',
+      <String, dynamic>{},
+    );
+    return DeviceAiStatusSummary.fromJson(data);
   }
 
   Future<DeviceStatusSummary> applyAngle({
@@ -169,16 +363,54 @@ class DeviceApiService {
     return getStatus(baseUrl: baseUrl);
   }
 
-  Future<String> triggerCapture({
+  Future<DeviceCaptureTriggerResult> triggerCapture({
     required String baseUrl,
     String reason = 'mobile_manual',
+    bool autoAnalyze = false,
   }) async {
     final data = await _postJson(
       baseUrl,
       '/api/device/capture/trigger',
-      <String, dynamic>{'reason': reason},
+      <String, dynamic>{'reason': reason, 'auto_analyze': autoAnalyze},
     );
-    return data['capture_path'] as String? ?? '';
+    return DeviceCaptureTriggerResult(
+      path: data['capture_path'] as String? ?? '',
+      analysis: data['analysis'] as Map<String, dynamic>?,
+      analysisError: data['analysis_error'] as String?,
+    );
+  }
+
+  Future<List<DeviceCaptureFileSummary>> listCaptureFiles({
+    required String baseUrl,
+    int limit = 20,
+  }) async {
+    final data = await _getJson(
+      baseUrl,
+      '/api/device/capture/list?limit=$limit',
+    );
+    final items = data['items'] as List<dynamic>? ?? const <dynamic>[];
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(DeviceCaptureFileSummary.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<List<int>> downloadCaptureFile({
+    required String baseUrl,
+    required String path,
+  }) async {
+    final response = await _send(
+      () => http.get(
+        Uri.parse(
+          '${_normalizeBaseUrl(baseUrl)}/api/device/capture/file',
+        ).replace(queryParameters: <String, String>{'path': path}),
+        headers: const <String, String>{'Accept': 'image/jpeg'},
+      ),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decodeEnvelope(response);
+    }
+    return response.bodyBytes;
   }
 
   Future<void> pushMobileFrame({
@@ -233,6 +465,34 @@ class DeviceApiService {
     return _decodeEnvelope(response);
   }
 
+  Future<Map<String, dynamic>> _patchJson(
+    String baseUrl,
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await _send(
+      () => http.patch(
+        Uri.parse('${_normalizeBaseUrl(baseUrl)}$path'),
+        headers: const <String, String>{
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode(body),
+      ),
+    );
+    return _decodeEnvelope(response);
+  }
+
+  Future<Map<String, dynamic>> _deleteJson(String baseUrl, String path) async {
+    final response = await _send(
+      () => http.delete(
+        Uri.parse('${_normalizeBaseUrl(baseUrl)}$path'),
+        headers: const <String, String>{'Accept': 'application/json'},
+      ),
+    );
+    return _decodeEnvelope(response);
+  }
+
   Future<http.Response> _send(Future<http.Response> Function() request) async {
     try {
       return await request().timeout(_requestTimeout);
@@ -260,7 +520,9 @@ class DeviceApiService {
     final body = _safeDecodeBody(response);
     final success = body['success'] as bool? ?? false;
     if (!success) {
-      final backendMessage = body['message'] as String?;
+      final detail = body['detail'];
+      final backendMessage =
+          body['message'] as String? ?? (detail is String ? detail : null);
       throw ApiException(
         _humanizeErrorMessage(
           response.statusCode,
@@ -282,9 +544,7 @@ class DeviceApiService {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } on FormatException {
       throw ApiException(
-        response.statusCode >= 500
-            ? '设备服务暂时不可用，请稍后重试。'
-            : '设备返回了无法识别的数据，请稍后重试。',
+        response.statusCode >= 500 ? '设备服务暂时不可用，请稍后重试。' : '设备返回了无法识别的数据，请稍后重试。',
         statusCode: response.statusCode,
       );
     }

@@ -12,6 +12,7 @@ from typing import Any
 
 import cv2
 
+from device_runtime.app_core import build_draw_vision
 from device_runtime.config import GimbalConfig, default_config
 from device_runtime.control.gimbal_controller import (
     GimbalController,
@@ -20,8 +21,13 @@ from device_runtime.control.gimbal_controller import (
     TTLBusSerialDriver,
 )
 from device_runtime.control.tracking_controller import TrackingController
+from device_runtime.interfaces.ai_assistant import (
+    build_ai_assistant_from_env,
+    describe_ai_assistant,
+)
 from device_runtime.interfaces.capture_trigger import LocalFileCaptureTrigger
 from device_runtime.interfaces.target_strategy import TargetPreset, build_target_strategy
+from device_runtime.services.ai_orchestrator import AIOrchestrator
 from device_runtime.services.capture_service import CaptureResult, CaptureService
 from device_runtime.mode_manager import ControlMode, ModeManager
 from device_runtime.services.control_service import ControlService
@@ -30,6 +36,9 @@ from device_runtime.services.runtime_state import RuntimeState
 from device_runtime.services.template_service import TemplateService
 from device_runtime.repositories.local_template_repository import LocalTemplateRepository
 from device_runtime.templates.template_compose import TemplateLibrary, TemplateProfile
+from device_runtime.templates.template_compose import GestureCaptureState
+from device_runtime.utils.common_types import BBox, DetectionResult, LineSegment, Point, VisionResult
+from device_runtime.utils.overlay_renderer import DeviceOverlayRenderer, OverlaySettings
 from device_runtime.vision.detector import AsyncDetector, build_runtime_detector
 from device_runtime.vision.video_source import build_video_source
 
@@ -40,6 +49,25 @@ class SessionOpenPayload:
     stream_url: str
     mirror_view: bool = True
     start_mode: str = "MANUAL"
+
+
+@dataclass(slots=True)
+class GestureSettings:
+    capture_enabled: bool = False
+    force_ok_enabled: bool = False
+    auto_analyze_enabled: bool = False
+
+    def as_dict(self) -> dict[str, bool]:
+        return {
+            "capture_enabled": self.capture_enabled,
+            "force_ok_enabled": self.force_ok_enabled,
+            "auto_analyze_enabled": self.auto_analyze_enabled,
+        }
+
+    def update_from_dict(self, values: dict[str, object]) -> None:
+        for key in self.as_dict():
+            if key in values and values[key] is not None:
+                setattr(self, key, bool(values[key]))
 
 
 def _env_text(name: str) -> str | None:
@@ -163,19 +191,49 @@ class DeviceSessionContext:
         self._selected_template_profile: TemplateProfile | None = None
         self._initial_selected_template_id = initial_selected_template_id
         self.capture_trigger = LocalFileCaptureTrigger()
+        self.ai_assistant = build_ai_assistant_from_env()
         self.capture_service = CaptureService(
             capture_trigger=self.capture_trigger,
+            ai_assistant=self.ai_assistant,
             runtime_state=self.runtime_state,
+        )
+        self.ai_orchestrator = AIOrchestrator(
+            ai_assistant=self.ai_assistant,
+            control_service=self.control_service,
+            capture_service=self.capture_service,
+            runtime_state=self.runtime_state,
+            frame_provider=self._read_frame_for_ai,
+            capture_frame_for_save=self._capture_frame_for_save,
         )
 
         self.source = build_video_source(self.config.video)
         self._async_detector: AsyncDetector | None = None
         self._frame_processor: FrameProcessor | None = None
+        self._overlay_renderer = DeviceOverlayRenderer()
+        self._overlay_settings = OverlaySettings(
+            enabled=self.config.app.enable_overlay,
+            show_live_body_skeleton=self.config.app.show_body_skeleton,
+        )
+        self._gesture_settings = GestureSettings()
+        self._gesture_state = GestureCaptureState()
+        self._last_hands_detected = False
+        self._last_hand_count = 0
+        self._last_gesture_event: str | None = None
+        self._last_gesture_event_at: float | None = None
+        self._last_gesture_capture_result: dict[str, Any] | None = None
+        self._last_gesture_capture_error: str | None = None
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
         self._last_submit_ts = 0.0
         self._stop_event = threading.Event()
         self._frame_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        self._job_lock = threading.RLock()
+        self._angle_job: threading.Thread | None = None
+        self._background_job: threading.Thread | None = None
+        self.last_angle_search_result: dict[str, Any] | None = None
+        self.last_angle_search_error: str | None = None
+        self.last_background_lock_result: dict[str, Any] | None = None
+        self.last_background_lock_error: str | None = None
         self.device_status = "idle"
 
         if self._initial_selected_template_id:
@@ -244,7 +302,23 @@ class DeviceSessionContext:
             self._async_detector.close()
             self._async_detector = None
         self.source.stop()
+        for worker in (self._angle_job, self._background_job):
+            if worker is not None and worker.is_alive():
+                worker.join(timeout=2.0)
         self.gimbal.close()
+
+    def build_ai_context(self) -> dict[str, Any]:
+        compose_feedback = self.runtime_state.last_compose_feedback
+        return {
+            "session_code": self.session_code,
+            "stream_url": self.stream_url,
+            "mode": self.control_service.get_mode().value,
+            "follow_mode": self.runtime_state.follow_mode,
+            "speed_mode": self.runtime_state.speed_mode,
+            "compose_score": getattr(compose_feedback, "total_score", None),
+            "template_id": self.runtime_state.selected_template_id,
+            "mirror_view": self.mirror_view,
+        }
 
     def build_status(self) -> dict:
         current_pan, current_tilt = self.control_service.get_current_angles(prefer_feedback=True)
@@ -262,6 +336,19 @@ class DeviceSessionContext:
                 "confidence": stable.confidence,
                 "label": stable.label,
             }
+        ai_provider_status = describe_ai_assistant(self.ai_assistant)
+        latest_capture_analysis = self.runtime_state.latest_capture_analysis
+        latest_capture = {
+            "path": self.runtime_state.latest_capture_path,
+            "analysis": {
+                "score": getattr(latest_capture_analysis, "score", None),
+                "summary": getattr(latest_capture_analysis, "summary", None),
+                "suggestions": list(getattr(latest_capture_analysis, "suggestions", []) or []),
+            }
+            if latest_capture_analysis is not None
+            else None,
+            "analysis_error": self.runtime_state.latest_capture_error,
+        }
 
         return {
             "session_opened": True,
@@ -277,6 +364,8 @@ class DeviceSessionContext:
             "last_runtime_error": self.runtime_state.last_runtime_error,
             "last_frame_at": self.runtime_state.last_frame_at,
             "last_detection_at": self.runtime_state.last_detection_at,
+            "ai_provider_status": ai_provider_status,
+            "latest_capture": latest_capture,
             "current_pan": round(float(current_pan), 3),
             "current_tilt": round(float(current_tilt), 3),
             "selected_template_id": self.runtime_state.selected_template_id,
@@ -298,7 +387,55 @@ class DeviceSessionContext:
                 "fit_score": self.runtime_state.ai_lock_fit_score,
                 "target_box_norm": self.runtime_state.ai_lock_target_box_norm,
             },
+            "ai_angle_search_running": self.runtime_state.ai_angle_search_running,
+            "background_lock_running": self._background_job is not None and self._background_job.is_alive(),
+            "last_angle_search_result": self.last_angle_search_result,
+            "last_angle_search_error": self.last_angle_search_error,
+            "last_background_lock_result": self.last_background_lock_result,
+            "last_background_lock_error": self.last_background_lock_error,
+            "ai_status": {
+                "angle_search_running": self.runtime_state.ai_angle_search_running,
+                "background_lock_running": self._background_job is not None and self._background_job.is_alive(),
+                "lock_enabled": self.runtime_state.ai_lock_mode_enabled,
+                "lock_fit_score": self.runtime_state.ai_lock_fit_score,
+                "lock_target_box_norm": self.runtime_state.ai_lock_target_box_norm,
+                "last_angle_search_result": self.last_angle_search_result,
+                "last_angle_search_error": self.last_angle_search_error,
+                "last_background_lock_result": self.last_background_lock_result,
+                "last_background_lock_error": self.last_background_lock_error,
+                "provider_status": ai_provider_status,
+                "latest_capture": latest_capture,
+            },
+            "overlay_status": self._overlay_settings.as_dict(),
+            "gesture_status": {
+                **self._gesture_settings.as_dict(),
+                "open_fist_requires_compose_ready": True,
+                "hands_detected": self._last_hands_detected,
+                "hand_count": self._last_hand_count,
+                "last_event": self._last_gesture_event,
+                "last_event_at": self._last_gesture_event_at,
+                "last_capture_result": self._last_gesture_capture_result,
+                "last_capture_error": self._last_gesture_capture_error,
+                "state": self._gesture_state.snapshot(),
+            },
         }
+
+    def update_runtime_options(
+        self,
+        *,
+        overlay: dict[str, object] | None = None,
+        gesture: dict[str, object] | None = None,
+    ) -> dict:
+        with self._lock:
+            if overlay is not None:
+                self._overlay_settings.update_from_dict(overlay)
+            if gesture is not None:
+                self._gesture_settings.update_from_dict(gesture)
+                if not self._gesture_settings.capture_enabled:
+                    self._gesture_state.reset_pose_capture()
+                if not self._gesture_settings.force_ok_enabled:
+                    self._gesture_state.reset()
+            return self.build_status()
 
     def _ensure_detector_pipeline(self) -> None:
         if self._async_detector is not None and self._frame_processor is not None:
@@ -348,13 +485,15 @@ class DeviceSessionContext:
                 vision,
                 selected_template=selected_template,
                 mirror_view=self.mirror_view,
-                compose_auto_control=False,
+                compose_auto_control=True,
                 ai_lock_mode_enabled=self.runtime_state.ai_lock_mode_enabled,
                 now=now,
             )
             if processed.stable_detection is not None:
                 self.runtime_state.last_detection_at = now
                 self._update_ai_lock_fit_score(processed.stable_detection, frame.shape)
+
+            self._update_gesture_state(processed, vision, now)
 
             if processed.tracking_command is not None:
                 try:
@@ -367,6 +506,49 @@ class DeviceSessionContext:
                     self.runtime_state.last_runtime_error = str(exc)
 
             time.sleep(0.01)
+
+    def start_angle_search_async(self, scan_config: dict[str, Any]) -> None:
+        with self._job_lock:
+            if self.ai_orchestrator.angle_search_running:
+                raise RuntimeError("AI angle search is already running")
+            self.last_angle_search_result = None
+            self.last_angle_search_error = None
+            self._angle_job = threading.Thread(
+                target=self._run_angle_search_job,
+                args=(scan_config,),
+                name=f"angle-search-{self.session_code}",
+                daemon=True,
+            )
+            self._angle_job.start()
+
+    def start_background_lock_async(self, scan_config: dict[str, Any], delay_s: float) -> None:
+        with self._job_lock:
+            if self._background_job is not None and self._background_job.is_alive():
+                raise RuntimeError("Background lock scan is already running")
+            self.last_background_lock_result = None
+            self.last_background_lock_error = None
+            self._background_job = threading.Thread(
+                target=self._run_background_lock_job,
+                args=(scan_config, delay_s),
+                name=f"background-lock-{self.session_code}",
+                daemon=True,
+            )
+            self._background_job.start()
+
+    def _run_angle_search_job(self, scan_config: dict[str, Any]) -> None:
+        try:
+            self.last_angle_search_result = self.ai_orchestrator.start_angle_search(scan_config)
+        except Exception as exc:
+            self.last_angle_search_error = str(exc)
+
+    def _run_background_lock_job(self, scan_config: dict[str, Any], delay_s: float) -> None:
+        try:
+            self.last_background_lock_result = self.ai_orchestrator.start_background_lock(
+                scan_config,
+                delay_s=delay_s,
+            )
+        except Exception as exc:
+            self.last_background_lock_error = str(exc)
 
     def apply_ai_lock(
         self,
@@ -387,17 +569,18 @@ class DeviceSessionContext:
         self.runtime_state.ai_lock_fit_score = 0.0
         return self.control_service.get_current_angles(prefer_feedback=True)
 
-    def trigger_capture(self, *, reason: str) -> CaptureResult:
+    def trigger_capture(self, *, reason: str, auto_analyze: bool = False) -> CaptureResult:
         frame = self.runtime_state.latest_frame
         if frame is None:
             frame = self._acquire_frame_for_capture()
         if frame is None:
             raise ValueError("no frame available for capture")
         return self.capture_service.capture(
-            frame=frame,
+            frame=self._capture_frame_for_save(frame),
             metadata={"reason": reason, "session_code": self.session_code},
             suffix=reason,
-            auto_analyze=False,
+            auto_analyze=auto_analyze,
+            context=self.build_ai_context(),
         )
 
     def get_preview_jpeg_bytes(self, *, quality: int = 75) -> bytes:
@@ -406,6 +589,7 @@ class DeviceSessionContext:
             frame = self._acquire_frame_for_capture()
         if frame is None:
             raise ValueError("no frame available for preview")
+        frame = self._build_preview_frame(frame)
 
         normalized_quality = max(35, min(95, int(quality)))
         success, encoded = cv2.imencode(
@@ -416,6 +600,148 @@ class DeviceSessionContext:
         if not success:
             raise ValueError("failed to encode preview frame")
         return encoded.tobytes()
+
+    def _build_preview_frame(self, frame):
+        preview = frame.copy()
+        vision = self.runtime_state.latest_vision
+        stable = self.runtime_state.stable_detection
+        draw_vision = build_draw_vision(vision, stable) if vision is not None else None
+        selected_template = self._selected_template_profile
+        if selected_template is None:
+            selected_template = self.template_service.get_selected_template()
+
+        if self.mirror_view:
+            preview = cv2.flip(preview, 1)
+            if draw_vision is not None:
+                draw_vision = self._mirror_vision(draw_vision, preview.shape)
+
+        self._overlay_renderer.draw(
+            preview,
+            vision=draw_vision,
+            selected_template=selected_template,
+            settings=self._overlay_settings,
+            ai_lock_target_box_norm=self.runtime_state.ai_lock_target_box_norm
+            if self.runtime_state.ai_lock_mode_enabled
+            else None,
+        )
+        return preview
+
+    def _update_gesture_state(self, processed, vision: VisionResult, now: float) -> None:
+        hands = vision.hand_landmarks or []
+        self._last_hand_count = len(hands)
+        self._last_hands_detected = any(len(hand) >= 21 for hand in hands)
+
+        if not self._gesture_settings.capture_enabled and not self._gesture_settings.force_ok_enabled:
+            self._gesture_state.reset()
+            return
+
+        selected_template = self._selected_template_profile
+        if selected_template is None:
+            selected_template = self.template_service.get_selected_template()
+        ready_for_pose_capture = (
+            self._gesture_settings.capture_enabled
+            and self.mode_manager.mode == ControlMode.SMART_COMPOSE
+            and selected_template is not None
+            and processed.ready_for_gesture
+        )
+        gesture_event = self._gesture_state.update(
+            hands,
+            now,
+            ready_for_pose_capture=ready_for_pose_capture,
+            force_ok_enabled=self._gesture_settings.force_ok_enabled,
+        )
+        if gesture_event is None:
+            return
+
+        self._last_gesture_event = gesture_event
+        self._last_gesture_event_at = now
+        reason = "gesture_ok" if gesture_event == "force_capture" else "gesture_open_fist"
+        try:
+            result = self.trigger_capture(
+                reason=reason,
+                auto_analyze=self._gesture_settings.auto_analyze_enabled,
+            )
+            self._last_gesture_capture_result = {
+                "path": result.path,
+                "reason": reason,
+                "analysis": {
+                    "score": getattr(result.analysis, "score", None),
+                    "summary": getattr(result.analysis, "summary", None),
+                    "suggestions": list(getattr(result.analysis, "suggestions", []) or []),
+                }
+                if result.analysis is not None
+                else None,
+                "analysis_error": result.analysis_error,
+            }
+            self._last_gesture_capture_error = None
+        except Exception as exc:
+            self._last_gesture_capture_error = str(exc)
+            self._last_gesture_capture_result = None
+
+    @staticmethod
+    def _mirror_vision(vision: VisionResult, frame_shape: tuple[int, int, int]) -> VisionResult:
+        width = int(frame_shape[1])
+        return VisionResult(
+            tracking_detection=DeviceSessionContext._mirror_detection(vision.tracking_detection, width),
+            tracking_candidates=[
+                DeviceSessionContext._mirror_detection(candidate, width)
+                for candidate in (vision.tracking_candidates or [])
+            ],
+            face_tracking_detection=DeviceSessionContext._mirror_detection(
+                vision.face_tracking_detection,
+                width,
+            ),
+            person_bbox=DeviceSessionContext._mirror_bbox(vision.person_bbox, width),
+            face_bbox=DeviceSessionContext._mirror_bbox(vision.face_bbox, width),
+            body_skeleton=[
+                DeviceSessionContext._mirror_segment(seg, width)
+                for seg in (vision.body_skeleton or [])
+            ],
+            face_mesh=[
+                DeviceSessionContext._mirror_segment(seg, width)
+                for seg in (vision.face_mesh or [])
+            ],
+            hand_landmarks=[
+                [DeviceSessionContext._mirror_point(point, width) for point in hand]
+                for hand in (vision.hand_landmarks or [])
+            ],
+            hand_handedness=vision.hand_handedness,
+        )
+
+    @staticmethod
+    def _mirror_detection(detection: DetectionResult | None, width: int) -> DetectionResult | None:
+        if detection is None:
+            return None
+        return DetectionResult(
+            bbox=DeviceSessionContext._mirror_bbox(detection.bbox, width),
+            confidence=detection.confidence,
+            label=detection.label,
+            track_id=detection.track_id,
+            anchor_point=DeviceSessionContext._mirror_point(detection.anchor_point, width)
+            if detection.anchor_point is not None
+            else None,
+            pose_landmarks={
+                key: DeviceSessionContext._mirror_point(point, width)
+                for key, point in (detection.pose_landmarks or {}).items()
+            },
+        )
+
+    @staticmethod
+    def _mirror_bbox(bbox: BBox | None, width: int) -> BBox | None:
+        if bbox is None:
+            return None
+        return BBox(x=max(0, width - bbox.x - bbox.w), y=bbox.y, w=bbox.w, h=bbox.h)
+
+    @staticmethod
+    def _mirror_point(point: Point, width: int) -> Point:
+        return Point(x=float(width - 1) - float(point.x), y=float(point.y))
+
+    @staticmethod
+    def _mirror_segment(segment: LineSegment, width: int) -> LineSegment:
+        return LineSegment(
+            start=DeviceSessionContext._mirror_point(segment.start, width),
+            end=DeviceSessionContext._mirror_point(segment.end, width),
+        )
 
     def select_template(self, template_id: str | int, template_data: dict[str, Any] | None = None) -> TemplateProfile:
         normalized_template_id = str(template_id)
@@ -441,6 +767,14 @@ class DeviceSessionContext:
         self.runtime_state.selected_template_updated_at = time.time()
         self.runtime_state.last_compose_feedback = None
         return profile
+
+    def clear_template(self) -> None:
+        self.template_service.clear_selected_template()
+        self._selected_template_profile = None
+        self.runtime_state.selected_template_id = None
+        self.runtime_state.selected_template_name = None
+        self.runtime_state.selected_template_updated_at = time.time()
+        self.runtime_state.last_compose_feedback = None
 
     def _build_inline_template_profile(
         self,
@@ -585,6 +919,18 @@ class DeviceSessionContext:
             time.sleep(0.05)
         return None
 
+    def _read_frame_for_ai(self):
+        frame = self.runtime_state.latest_frame
+        if frame is not None:
+            return frame
+        return self._acquire_frame_for_capture()
+
+    def _capture_frame_for_save(self, frame):
+        out = frame.copy()
+        if self.mirror_view:
+            out = cv2.flip(out, 1)
+        return out
+
 
 class SessionManager:
     """Single-session manager for first device runtime API version."""
@@ -674,6 +1020,13 @@ class SessionManager:
             if self._session is not None:
                 self._session.select_template(normalized_template_id)
             return profile
+
+    def clear_selected_template(self) -> None:
+        with self._lock:
+            self._default_selected_template_id = None
+            self.template_service.clear_selected_template()
+            if self._session is not None:
+                self._session.clear_template()
 
     def get_default_selected_template_id(self) -> str | None:
         with self._lock:

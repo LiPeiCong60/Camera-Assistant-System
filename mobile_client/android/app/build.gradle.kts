@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -41,4 +43,35 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.google.mediapipe:tasks-vision:0.10.26")
+}
+
+val poseLandmarkerModel = layout.projectDirectory.file(
+    "src/main/assets/pose_landmarker_lite.task",
+)
+
+val downloadPoseLandmarkerModel by tasks.registering {
+    outputs.file(poseLandmarkerModel)
+    doLast {
+        val target = poseLandmarkerModel.asFile
+        if (target.exists() && target.length() > 0L) {
+            return@doLast
+        }
+        target.parentFile.mkdirs()
+        val url = URL(
+            "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+        )
+        url.openStream().use { input ->
+            target.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(downloadPoseLandmarkerModel)
 }

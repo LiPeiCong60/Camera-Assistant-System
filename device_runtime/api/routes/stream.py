@@ -22,6 +22,42 @@ class StartStreamRequest(BaseModel):
     stream_url: str = Field(min_length=1)
 
 
+def _parse_mobile_stream_config(raw_config: str) -> tuple[int, int, str, int, int]:
+    config = json.loads(raw_config)
+    width = int(config.get("width", 0))
+    height = int(config.get("height", 0))
+    frame_format = str(config.get("format", "")).lower()
+    rotation_degrees = int(config.get("rotation_degrees", 0)) % 360
+    if (
+        config.get("type") != "config"
+        or frame_format not in SUPPORTED_MOBILE_WS_FORMATS
+        or rotation_degrees not in SUPPORTED_MOBILE_ROTATIONS
+        or width <= 0
+        or height <= 0
+    ):
+        raise ValueError("invalid mobile stream config")
+    expected_size = width * height * 3 // 2
+    return width, height, frame_format, rotation_degrees, expected_size
+
+
+def _decode_mobile_nv21_frame(
+    payload: bytes,
+    *,
+    width: int,
+    height: int,
+    rotation_degrees: int,
+) -> np.ndarray:
+    yuv = np.frombuffer(payload, dtype=np.uint8).reshape((height * 3 // 2, width))
+    frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV21)
+    if rotation_degrees == 90:
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation_degrees == 180:
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
+    elif rotation_degrees == 270:
+        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
 @router.post("/start")
 def start_stream(payload: StartStreamRequest) -> dict:
     session = require_session()
@@ -60,24 +96,32 @@ async def push_mobile_stream(websocket: WebSocket) -> None:
 
     try:
         raw_config = await websocket.receive_text()
-        config = json.loads(raw_config)
-        width = int(config.get("width", 0))
-        height = int(config.get("height", 0))
-        frame_format = str(config.get("format", "")).lower()
-        rotation_degrees = int(config.get("rotation_degrees", 0)) % 360
-        if (
-            config.get("type") != "config"
-            or frame_format not in SUPPORTED_MOBILE_WS_FORMATS
-            or rotation_degrees not in SUPPORTED_MOBILE_ROTATIONS
-            or width <= 0
-            or height <= 0
-        ):
-            await websocket.close(code=1003, reason="invalid mobile stream config")
-            return
-
-        expected_size = width * height * 3 // 2
+        width, height, frame_format, rotation_degrees, expected_size = (
+            _parse_mobile_stream_config(raw_config)
+        )
         while True:
-            payload = await websocket.receive_bytes()
+            message = await websocket.receive()
+            if "text" in message and message["text"] is not None:
+                try:
+                    (
+                        width,
+                        height,
+                        frame_format,
+                        rotation_degrees,
+                        expected_size,
+                    ) = _parse_mobile_stream_config(message["text"])
+                except (json.JSONDecodeError, ValueError):
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": "invalid mobile stream config",
+                        }
+                    )
+                continue
+
+            payload = message.get("bytes")
+            if payload is None:
+                continue
             if len(payload) != expected_size:
                 await websocket.send_json(
                     {
@@ -89,16 +133,12 @@ async def push_mobile_stream(websocket: WebSocket) -> None:
                 )
                 continue
 
-            yuv = np.frombuffer(payload, dtype=np.uint8).reshape(
-                (height * 3 // 2, width)
+            frame = _decode_mobile_nv21_frame(
+                payload,
+                width=width,
+                height=height,
+                rotation_degrees=rotation_degrees,
             )
-            frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_NV21)
-            if rotation_degrees == 90:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-            elif rotation_degrees == 180:
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-            elif rotation_degrees == 270:
-                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
             mobile_push_frame_store.set_frame(frame)
     except (json.JSONDecodeError, ValueError):
         await websocket.close(code=1003, reason="invalid mobile stream config")

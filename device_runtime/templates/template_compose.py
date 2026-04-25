@@ -331,6 +331,13 @@ class GestureCaptureState:
         self.reset_pose_capture()
         self._counts["ok"] = 0
 
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "phase": self._phase,
+            "counts": dict(self._counts),
+            "cooling_down": time.time() < self._cooldown_until,
+        }
+
     def update(
         self,
         hands: list[list[Point]] | None,

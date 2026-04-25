@@ -98,19 +98,26 @@ class CameraOverlayPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..color = const Color(0xFF42C6FF).withValues(alpha: 0.92);
 
-    final points = scene.skeletonPoints
-        .map(
-          (point) =>
-              _offsetFromPoint(point, size, mirrored: mirrorDynamicOverlays),
-        )
-        .toList(growable: false);
-
     for (final edge in _liveSkeletonEdges) {
-      if (edge[0] >= points.length || edge[1] >= points.length) {
+      if (edge[0] >= scene.skeletonPoints.length ||
+          edge[1] >= scene.skeletonPoints.length) {
         continue;
       }
-      canvas.drawLine(points[edge[0]], points[edge[1]], segmentPaint);
+      final start = scene.skeletonPoints[edge[0]];
+      final end = scene.skeletonPoints[edge[1]];
+      if (!_isDrawablePoint(start) || !_isDrawablePoint(end)) {
+        continue;
+      }
+      canvas.drawLine(
+        _offsetFromPoint(start, size, mirrored: mirrorDynamicOverlays),
+        _offsetFromPoint(end, size, mirrored: mirrorDynamicOverlays),
+        segmentPaint,
+      );
     }
+  }
+
+  bool _isDrawablePoint(NormalizedPoint point) {
+    return point.x.isFinite && point.y.isFinite;
   }
 
   double _resolveBodyBoxLeft(Size size) {

@@ -53,6 +53,8 @@ backend/.env
 !backend/.env.example
 *.pem
 *.key
+*.jks
+*.keystore
 *.p12
 *.pfx
 id_rsa
@@ -63,10 +65,15 @@ id_ed25519.pub
 *.secrets
 credentials.json
 credentials.local.json
+google-services.json
+GoogleService-Info.plist
 secrets.json
 secrets.local.json
 *.local
 *.override
+local.properties
+key.properties
+mobile_client/android/key.properties
 
 # Local models / downloadable runtime assets
 *.pt

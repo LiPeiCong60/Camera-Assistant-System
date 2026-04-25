@@ -16,6 +16,7 @@ import '../../models/normalized_geometry.dart';
 import '../../models/template_summary.dart';
 import '../../services/api_client.dart';
 import '../../services/local_image_resolver.dart';
+import '../../services/media_pipe_pose_detector_service.dart';
 import '../../services/mobile_api_service.dart';
 import '../device_link/device_link_page.dart';
 import '../overlay/camera_overlay_painter.dart';
@@ -39,8 +40,6 @@ class CameraCapturePage extends StatefulWidget {
 enum _CameraShootMode { normal, templateGuided, aiBurst, background }
 
 class _CameraCapturePageState extends State<CameraCapturePage> {
-  static const double _landscapePreviewFrameAspectRatio = 16 / 9;
-  static const double _portraitPreviewFrameAspectRatio = 9 / 16;
   static const Map<DeviceOrientation, int> _cameraOrientations =
       <DeviceOrientation, int>{
         DeviceOrientation.portraitUp: 0,
@@ -84,6 +83,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _isHandlingOrientationChange = false;
   int _lastPoseFrameAtMs = 0;
   int _consecutivePoseMisses = 0;
+  String _livePoseBackendLabel = '等待检测';
   Timer? _bannerTimer;
   final List<XFile> _pendingBurstCaptures = <XFile>[];
   OverlaySettings _overlaySettings = const OverlaySettings();
@@ -91,6 +91,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   late final PoseDetector _poseDetector = PoseDetector(
     options: PoseDetectorOptions(mode: PoseDetectionMode.stream),
   );
+  final MediaPipePoseDetectorService _mediaPipePoseDetector =
+      MediaPipePoseDetectorService();
 
   @override
   void initState() {
@@ -105,16 +107,16 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     _bannerTimer?.cancel();
     unawaited(_restoreAppOrientations());
     _stopLivePoseDetection();
+    unawaited(_mediaPipePoseDetector.close());
     _poseDetector.close();
     _controller?.dispose();
     super.dispose();
   }
 
-  bool get _isFrontCameraActive =>
-      _cameras.isNotEmpty &&
-      _cameras[_selectedCameraIndex].lensDirection == CameraLensDirection.front;
+  CameraDescription? get _activeCamera =>
+      _cameras.isEmpty ? null : _cameras[_selectedCameraIndex];
 
-  bool get _shouldMirrorPreview => _mirrorPreview && _isFrontCameraActive;
+  bool get _shouldMirrorPreview => _mirrorPreview;
 
   bool _isPreviewLandscape(CameraController controller) {
     final orientation = controller.value.isRecordingVideo
@@ -706,6 +708,34 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return index >= 0 ? index : 0;
   }
 
+  int? _cameraIndexForDirection(CameraLensDirection direction) {
+    final index = _cameras.indexWhere(
+      (camera) => camera.lensDirection == direction,
+    );
+    return index >= 0 ? index : null;
+  }
+
+  int? _switchTargetCameraIndex() {
+    final activeCamera = _activeCamera;
+    if (activeCamera == null) {
+      return null;
+    }
+
+    final targetDirection =
+        activeCamera.lensDirection == CameraLensDirection.front
+        ? CameraLensDirection.back
+        : CameraLensDirection.front;
+    return _cameraIndexForDirection(targetDirection);
+  }
+
+  String _cameraSwitchUnavailableMessage() {
+    final activeCamera = _activeCamera;
+    if (activeCamera?.lensDirection == CameraLensDirection.front) {
+      return '没有发现可用后摄，请确认设备相机配置。';
+    }
+    return '没有发现可用前摄，请确认系统或模拟器已启用前置摄像头。';
+  }
+
   Future<void> _openCamera(int index) async {
     final previousController = _controller;
     await _stopLivePoseDetection(clearOverlay: false);
@@ -736,11 +766,16 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Future<void> _toggleCamera() async {
-    if (_cameras.length < 2 || _isPreparing) {
+    if (_isPreparing) {
       return;
     }
 
-    final nextIndex = (_selectedCameraIndex + 1) % _cameras.length;
+    final nextIndex = _switchTargetCameraIndex();
+    if (nextIndex == null) {
+      _showBanner(errorMessage: _cameraSwitchUnavailableMessage());
+      return;
+    }
+
     setState(() {
       _isPreparing = true;
       _errorMessage = null;
@@ -770,7 +805,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     setState(() {
       _mirrorPreview = !_mirrorPreview;
     });
-    _showBanner(syncMessage: _mirrorPreview ? '前摄镜像已开启，模板线保持原方向。' : '前摄镜像已关闭。');
+    _showBanner(syncMessage: _mirrorPreview ? '画面镜像已开启。' : '画面镜像已关闭。');
   }
 
   Future<void> _capturePhoto() async {
@@ -1145,6 +1180,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return enabled.join(' / ');
   }
 
+  String _poseDetectionStatusLabel() {
+    if (!_shouldRunLivePoseDetection) {
+      return '未启用';
+    }
+    return _livePoseBackendLabel;
+  }
+
   String _analysisStatusLabel() {
     final task = _lastAiTask;
     if (task == null) {
@@ -1212,10 +1254,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     if (!_mirrorPreview) {
       return '已关闭';
     }
-    if (_isFrontCameraActive) {
-      return '已开启';
-    }
-    return '前摄启用时自动镜像';
+    return '已开启';
   }
 
   OverlayScene _composeOverlayScene() {
@@ -1338,6 +1377,31 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     CameraImage image,
     CameraDescription camera,
   ) async {
+    final rotationDegrees = _cameraImageRotationDegrees(camera);
+    if (rotationDegrees == null) {
+      return;
+    }
+    final mediaPipeScene = await _processMediaPipePoseFrame(
+      image,
+      rotationDegrees: rotationDegrees,
+    );
+    if (mediaPipeScene != null) {
+      if (!mounted) {
+        return;
+      }
+      _consecutivePoseMisses = 0;
+      final nextScene = _stabilizeLiveOverlayScene(
+        _liveOverlayScene,
+        mediaPipeScene,
+      );
+      setState(() {
+        _liveOverlayScene = nextScene;
+        _livePoseBackendLabel = 'MediaPipe';
+        _overlayScene = _composeOverlayScene();
+      });
+      return;
+    }
+
     final inputImage = _inputImageFromCameraImage(image, camera);
     if (inputImage == null) {
       return;
@@ -1356,6 +1420,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         }
         setState(() {
           _liveOverlayScene = OverlayScene.empty();
+          _livePoseBackendLabel = '未检测到';
           _overlayScene = _composeOverlayScene();
         });
         return;
@@ -1373,6 +1438,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         }
         setState(() {
           _liveOverlayScene = OverlayScene.empty();
+          _livePoseBackendLabel = '未检测到';
           _overlayScene = _composeOverlayScene();
         });
         return;
@@ -1382,6 +1448,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       final nextScene = _stabilizeLiveOverlayScene(_liveOverlayScene, rawScene);
       setState(() {
         _liveOverlayScene = nextScene;
+        _livePoseBackendLabel = 'ML Kit';
         _overlayScene = _composeOverlayScene();
       });
     } catch (_) {
@@ -1389,34 +1456,33 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
   }
 
+  Future<OverlayScene?> _processMediaPipePoseFrame(
+    CameraImage image, {
+    required int rotationDegrees,
+  }) async {
+    final result = await _mediaPipePoseDetector.detect(
+      image: image,
+      rotationDegrees: rotationDegrees,
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (result == null) {
+      return null;
+    }
+    if (!result.hasPose) {
+      return null;
+    }
+    return _overlaySceneFromMediaPipePose(result);
+  }
+
   InputImage? _inputImageFromCameraImage(
     CameraImage image,
     CameraDescription camera,
   ) {
-    final controller = _controller;
-    if (controller == null) {
+    final rotationDegrees = _cameraImageRotationDegrees(camera);
+    if (rotationDegrees == null) {
       return null;
     }
-
-    final sensorOrientation = camera.sensorOrientation;
-    InputImageRotation? rotation;
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else if (Platform.isAndroid) {
-      final deviceOrientation =
-          _cameraOrientations[controller.value.deviceOrientation];
-      if (deviceOrientation == null) {
-        return null;
-      }
-      var rotationCompensation = deviceOrientation;
-      if (camera.lensDirection == CameraLensDirection.front) {
-        rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
-      } else {
-        rotationCompensation =
-            (sensorOrientation - rotationCompensation + 360) % 360;
-      }
-      rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
-    }
+    final rotation = InputImageRotationValue.fromRawValue(rotationDegrees);
     if (rotation == null) {
       return null;
     }
@@ -1441,6 +1507,29 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         bytesPerRow: plane.bytesPerRow,
       ),
     );
+  }
+
+  int? _cameraImageRotationDegrees(CameraDescription camera) {
+    final controller = _controller;
+    if (controller == null) {
+      return null;
+    }
+    final sensorOrientation = camera.sensorOrientation;
+    if (Platform.isIOS) {
+      return sensorOrientation;
+    }
+    if (!Platform.isAndroid) {
+      return null;
+    }
+    final deviceOrientation =
+        _cameraOrientations[controller.value.deviceOrientation];
+    if (deviceOrientation == null) {
+      return null;
+    }
+    if (camera.lensDirection == CameraLensDirection.front) {
+      return (sensorOrientation + deviceOrientation) % 360;
+    }
+    return (sensorOrientation - deviceOrientation + 360) % 360;
   }
 
   OverlayScene? _overlaySceneFromPose(
@@ -1522,77 +1611,229 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       height: _clampDimension(maxY - minY + padY * 2, minY - padY),
     );
 
-    final fallbackScene = OverlayScene.fromTargetBox(bodyBox);
+    final hiddenPoint = NormalizedPoint(double.nan, double.nan);
     final skeletonPoints = <NormalizedPoint>[
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.nose,
             PoseLandmarkType.leftEye,
             PoseLandmarkType.rightEye,
           ], minLikelihood: 0.3) ??
-          fallbackScene.skeletonPoints[0],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftShoulder,
           ], minLikelihood: 0.22) ??
-          fallbackScene.skeletonPoints[1],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightShoulder,
           ], minLikelihood: 0.22) ??
-          fallbackScene.skeletonPoints[2],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftElbow,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[3],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightElbow,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[4],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftWrist,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[5],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightWrist,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[6],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftHip,
           ], minLikelihood: 0.22) ??
-          fallbackScene.skeletonPoints[7],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightHip,
           ], minLikelihood: 0.22) ??
-          fallbackScene.skeletonPoints[8],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftKnee,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[9],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightKnee,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[10],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftAnkle,
             PoseLandmarkType.leftHeel,
             PoseLandmarkType.leftFootIndex,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[11],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightAnkle,
             PoseLandmarkType.rightHeel,
             PoseLandmarkType.rightFootIndex,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[12],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.leftFootIndex,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[13],
+          hiddenPoint,
       _normalizedPosePoint(landmarks, normalizedImageSize, <PoseLandmarkType>[
             PoseLandmarkType.rightFootIndex,
           ], minLikelihood: 0.25) ??
-          fallbackScene.skeletonPoints[14],
+          hiddenPoint,
     ];
 
-    return fallbackScene.copyWith(skeletonPoints: skeletonPoints);
+    return OverlayScene(
+      bodyBox: bodyBox,
+      skeletonPoints: skeletonPoints,
+      templateSegments: const <OverlaySegment>[],
+    );
+  }
+
+  OverlayScene? _overlaySceneFromMediaPipePose(MediaPipePoseResult result) {
+    final landmarks = <int, MediaPipePoseLandmark>{
+      for (final landmark in result.landmarks) landmark.index: landmark,
+    };
+    if (landmarks.isEmpty) {
+      return null;
+    }
+
+    const stableIndices = <int>[
+      0,
+      2,
+      5,
+      7,
+      8,
+      11,
+      12,
+      13,
+      14,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+    ];
+    final corePoints = stableIndices
+        .map(
+          (int index) => _normalizedMediaPipePoint(landmarks, <int>[
+            index,
+          ], minConfidence: 0.25),
+        )
+        .whereType<NormalizedPoint>()
+        .toList(growable: false);
+    final sampledPoints = landmarks.values
+        .where((landmark) => landmark.confidence >= 0.25)
+        .map(
+          (landmark) =>
+              NormalizedPoint(_clamp01(landmark.x), _clamp01(landmark.y)),
+        )
+        .toList(growable: false);
+    final boxPoints = corePoints.length >= 6 ? corePoints : sampledPoints;
+    if (boxPoints.isEmpty) {
+      return null;
+    }
+
+    var minX = 1.0;
+    var minY = 1.0;
+    var maxX = 0.0;
+    var maxY = 0.0;
+    for (final point in boxPoints) {
+      minX = math.min(minX, point.x);
+      minY = math.min(minY, point.y);
+      maxX = math.max(maxX, point.x);
+      maxY = math.max(maxY, point.y);
+    }
+
+    final width = math.max(0.12, maxX - minX);
+    final height = math.max(0.20, maxY - minY);
+    final padX = math.min(0.08, width * 0.16);
+    final padY = math.min(0.10, height * 0.18);
+    final bodyBox = NormalizedRect(
+      left: _clamp01(minX - padX),
+      top: _clamp01(minY - padY),
+      width: _clampDimension(maxX - minX + padX * 2, minX - padX),
+      height: _clampDimension(maxY - minY + padY * 2, minY - padY),
+    );
+
+    final hiddenPoint = NormalizedPoint(double.nan, double.nan);
+    final skeletonPoints = <NormalizedPoint>[
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            0,
+            2,
+            5,
+          ], minConfidence: 0.3) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            11,
+          ], minConfidence: 0.22) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            12,
+          ], minConfidence: 0.22) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            13,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            14,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            15,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            16,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            23,
+          ], minConfidence: 0.22) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            24,
+          ], minConfidence: 0.22) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            25,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            26,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            27,
+            29,
+            31,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            28,
+            30,
+            32,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            31,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+      _normalizedMediaPipePoint(landmarks, const <int>[
+            32,
+          ], minConfidence: 0.25) ??
+          hiddenPoint,
+    ];
+
+    return OverlayScene(
+      bodyBox: bodyBox,
+      skeletonPoints: skeletonPoints,
+      templateSegments: const <OverlaySegment>[],
+    );
   }
 
   Size _poseProcessingSize(Size rawSize, InputImageRotation rotation) {
@@ -1651,6 +1892,21 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return null;
   }
 
+  NormalizedPoint? _normalizedMediaPipePoint(
+    Map<int, MediaPipePoseLandmark> landmarks,
+    List<int> indices, {
+    double minConfidence = 0.15,
+  }) {
+    for (final index in indices) {
+      final landmark = landmarks[index];
+      if (landmark == null || landmark.confidence < minConfidence) {
+        continue;
+      }
+      return NormalizedPoint(_clamp01(landmark.x), _clamp01(landmark.y));
+    }
+    return null;
+  }
+
   List<NormalizedPoint> _blendPoints(
     List<NormalizedPoint> previous,
     List<NormalizedPoint> next,
@@ -1682,6 +1938,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     NormalizedPoint next,
     double alpha,
   ) {
+    if (!next.x.isFinite || !next.y.isFinite) {
+      return next;
+    }
+    if (!previous.x.isFinite || !previous.y.isFinite) {
+      return next;
+    }
     return NormalizedPoint(
       _blendValue(previous.x, next.x, alpha),
       _blendValue(previous.y, next.y, alpha),
@@ -1768,23 +2030,23 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
         child: Stack(
-            children: <Widget>[
-              Column(
-                children: <Widget>[
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      _buildTopBar(context, isLandscape: false),
-                      const SizedBox(height: 12),
-                      _buildTopBanners(),
-                    ],
-                  ),
-                  const Spacer(),
-                  _buildBottomHud(context, isLandscape: false),
-                ],
-              ),
-              if (_isPreparing) const Center(child: CircularProgressIndicator()),
-            ],
+          children: <Widget>[
+            Column(
+              children: <Widget>[
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _buildTopBar(context, isLandscape: false),
+                    const SizedBox(height: 12),
+                    _buildTopBanners(),
+                  ],
+                ),
+                const Spacer(),
+                _buildBottomHud(context, isLandscape: false),
+              ],
+            ),
+            if (_isPreparing) const Center(child: CircularProgressIndicator()),
+          ],
         ),
       ),
     );
@@ -1813,40 +2075,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   Widget _buildPreviewRegion() {
     return Positioned.fill(
-      child: Builder(
-        builder: (BuildContext context) {
-          final isLandscape =
-              MediaQuery.orientationOf(context) == Orientation.landscape;
-          return LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final frameAspectRatio = isLandscape
-                  ? _landscapePreviewFrameAspectRatio
-                  : _portraitPreviewFrameAspectRatio;
-              var frameWidth = constraints.maxWidth;
-              var frameHeight = frameWidth / frameAspectRatio;
-              if (frameHeight > constraints.maxHeight) {
-                frameHeight = constraints.maxHeight;
-                frameWidth = frameHeight * frameAspectRatio;
-              }
-
-              final frame = SizedBox(
-                width: frameWidth,
-                height: frameHeight,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    Positioned.fill(child: _buildPreview()),
-                    const Positioned.fill(child: _CompositionGuide()),
-                  ],
-                ),
-              );
-
-              return isLandscape
-                  ? Align(alignment: Alignment.centerRight, child: frame)
-                  : Center(child: frame);
-            },
-          );
-        },
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          _buildPreview(),
+          const Positioned.fill(child: _CompositionGuide()),
+        ],
       ),
     );
   }
@@ -1868,8 +2102,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
 
     final previewAspectRatio = _previewWidgetAspectRatio(controller);
-    final previewWidth = previewAspectRatio >= 1 ? 1600 * previewAspectRatio : 1600.0;
-    final previewHeight = previewAspectRatio >= 1 ? 1600.0 : 1600 / previewAspectRatio;
+    final previewWidth = previewAspectRatio >= 1
+        ? 1600 * previewAspectRatio
+        : 1600.0;
+    final previewHeight = previewAspectRatio >= 1
+        ? 1600.0
+        : 1600 / previewAspectRatio;
 
     return ClipRect(
       child: ColoredBox(
@@ -2051,7 +2289,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               icon: Icons.cameraswitch_outlined,
               label: '切换',
               size: railButtonSize,
-              onTap: _cameras.length > 1 && !_isPreparing && !_isSubmitting
+              onTap: _cameras.isNotEmpty && !_isPreparing && !_isSubmitting
                   ? _toggleCamera
                   : null,
             ),
@@ -2113,6 +2351,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     final statusItems = <({String label, String value})>[
       (label: '模式', value: _shootModeLabel),
       (label: '状态', value: _currentCaptureStatusLabel()),
+      (label: '识别', value: _poseDetectionStatusLabel()),
     ];
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -2273,6 +2512,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       if (_selectedTemplate != null)
         (label: '模板', value: _selectedTemplate!.name),
       (label: '状态', value: _currentCaptureStatusLabel()),
+      (label: '识别', value: _poseDetectionStatusLabel()),
       if (_lastDeviceLinkResult != null)
         (label: '联动', value: _deviceFlowStatusLabel()),
     ];
@@ -2393,7 +2633,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                         label: '切换',
                         size: sideButtonSize,
                         onTap:
-                            _cameras.length > 1 &&
+                            _cameras.isNotEmpty &&
                                 !_isPreparing &&
                                 !_isSubmitting
                             ? _toggleCamera
@@ -2620,7 +2860,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                     icon: Icons.cameraswitch_outlined,
                     label: '切换镜头',
                     onTap:
-                        _cameras.length > 1 && !_isPreparing && !_isSubmitting
+                        _cameras.isNotEmpty && !_isPreparing && !_isSubmitting
                         ? _toggleCamera
                         : null,
                   ),
@@ -2628,7 +2868,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                     icon: _mirrorPreview
                         ? Icons.flip_camera_android_outlined
                         : Icons.flip_camera_android,
-                    label: _mirrorPreview ? '关闭前摄镜像' : '开启前摄镜像',
+                    label: _mirrorPreview ? '关闭画面镜像' : '开启画面镜像',
                     onTap: _isPreparing ? null : _togglePreviewMirror,
                   ),
                   _SheetActionButton(
@@ -2664,7 +2904,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                     label: '画面方向',
                     value: _orientationLabel(orientation),
                   ),
-                  _SheetStatCard(label: '前摄镜像', value: _mirrorStatusLabel()),
+                  _SheetStatCard(label: '画面镜像', value: _mirrorStatusLabel()),
                   if (_selectedTemplate != null)
                     _SheetStatCard(
                       label: '当前模板',
@@ -2712,6 +2952,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               ),
               _SheetStatCard(label: '分析状态', value: _analysisStatusLabel()),
               _SheetStatCard(label: '设备联动', value: _deviceFlowStatusLabel()),
+              _SheetStatCard(label: '识别引擎', value: _poseDetectionStatusLabel()),
               _SheetStatCard(
                 label: '取景状态',
                 value: _overlayStatusLabel(),

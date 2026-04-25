@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from device_runtime.interfaces.capture_trigger import CaptureTrigger, LocalFileCaptureTrigger
-from device_runtime.interfaces.ai_assistant import AIPhotoAssistant, CaptureAnalysis
+from device_runtime.interfaces.ai_assistant import (
+    AIPhotoAssistant,
+    CaptureAnalysis,
+    describe_ai_assistant,
+)
 from device_runtime.services.runtime_state import RuntimeState
 
 
@@ -70,6 +74,10 @@ class CaptureService:
         """运行AI分析"""
         if not self._ai_assistant:
             raise RuntimeError("AI助手未初始化")
+        if describe_ai_assistant(self._ai_assistant).get("configured") is not True:
+            raise RuntimeError(
+                "AI provider is not configured. Set SILICONFLOW_API_KEY before starting device_runtime."
+            )
         return self._ai_assistant.analyze_capture(image_path, context=context)
 
     def get_latest_capture_path(self) -> Optional[str]:

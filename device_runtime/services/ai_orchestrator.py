@@ -9,7 +9,11 @@ import tempfile
 import time
 from typing import Any, Callable, Dict, Optional
 
-from device_runtime.interfaces.ai_assistant import AIPhotoAssistant, BatchBackgroundPickResult
+from device_runtime.interfaces.ai_assistant import (
+    AIPhotoAssistant,
+    BatchBackgroundPickResult,
+    describe_ai_assistant,
+)
 from device_runtime.services.capture_service import CaptureService
 from device_runtime.services.control_service import ControlService
 from device_runtime.services.runtime_state import RuntimeState
@@ -60,8 +64,10 @@ class AIOrchestrator:
         latest_frame=None,
     ) -> Dict[str, Any]:
         """开始自动找角度"""
+        self._require_configured_ai()
         if self._runtime_state.ai_angle_search_running:
             raise RuntimeError("AI自动找角度正在执行中")
+        self._require_configured_ai()
         if self._get_frame(fallback=latest_frame) is None:
             raise ValueError("当前没有可用画面")
 
@@ -140,6 +146,7 @@ class AIOrchestrator:
         latest_frame=None,
     ) -> Dict[str, Any]:
         """执行批量角度搜索"""
+        self._require_configured_ai()
         import cv2
         import os
 
@@ -218,6 +225,7 @@ class AIOrchestrator:
         import cv2
         import os
 
+        self._require_configured_ai()
         if delay_s > 0.05:
             time.sleep(delay_s)
 
@@ -345,3 +353,11 @@ class AIOrchestrator:
         if fallback is not None:
             return fallback.copy() if hasattr(fallback, "copy") else fallback
         return None
+
+    def _require_configured_ai(self) -> None:
+        status = describe_ai_assistant(self._ai_assistant)
+        if status.get("configured") is True:
+            return
+        raise RuntimeError(
+            "AI provider is not configured. Set SILICONFLOW_API_KEY before starting device_runtime."
+        )

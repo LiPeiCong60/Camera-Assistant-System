@@ -204,6 +204,14 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         if not self._api_key:
             raise ValueError("Missing SILICONFLOW_API_KEY")
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
+
     def reply(self, message: str, context: dict[str, Any] | None = None) -> str:
         ctx = context or {}
         sys_prompt = (
@@ -410,6 +418,26 @@ def build_ai_assistant_from_env() -> AIPhotoAssistant:
         endpoint=endpoint,
         timeout_s=timeout_s,
     )
+
+
+def describe_ai_assistant(assistant: AIPhotoAssistant) -> dict[str, Any]:
+    if isinstance(assistant, SiliconFlowAIPhotoAssistant):
+        return {
+            "configured": True,
+            "provider": "siliconflow",
+            "model": assistant.model_name,
+            "endpoint": assistant.endpoint,
+        }
+    if isinstance(assistant, MockAIPhotoAssistant):
+        return {
+            "configured": False,
+            "provider": "mock",
+            "message": "Set SILICONFLOW_API_KEY before starting device_runtime to enable vision AI analysis.",
+        }
+    return {
+        "configured": True,
+        "provider": assistant.__class__.__name__,
+    }
 
 
 def _extract_choice_content(payload: dict[str, Any]) -> str:
