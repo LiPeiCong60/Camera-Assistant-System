@@ -4,7 +4,6 @@ import AdminLayout from "../views/AdminLayout.vue";
 import AiProviderConfigsView from "../views/AiProviderConfigsView.vue";
 import AiTasksView from "../views/AiTasksView.vue";
 import CapturesView from "../views/CapturesView.vue";
-import DevicesView from "../views/DevicesView.vue";
 import LoginView from "../views/LoginView.vue";
 import PlansView from "../views/PlansView.vue";
 import RecommendedTemplatesView from "../views/RecommendedTemplatesView.vue";
@@ -76,13 +75,7 @@ const routes = [
       },
       {
         path: "devices",
-        name: "devices",
-        component: DevicesView,
-        meta: {
-          title: "设备列表",
-          layoutTitle: "设备列表",
-          layoutDescription: "查看设备在线状态、绑定关系和控制地址。",
-        },
+        redirect: { name: "overview" },
       },
       {
         path: "captures",
@@ -128,7 +121,7 @@ router.beforeEach((to) => {
   if (!to.meta.public && !store.accessToken) {
     return { name: "login" };
   }
-  document.title = to.meta.title ? `${to.meta.title} | Camera Assistant` : "Camera Assistant Admin";
+  document.title = to.meta.title ? `${to.meta.title} | 云影随行` : "云影随行管理后台";
   return true;
 });
 

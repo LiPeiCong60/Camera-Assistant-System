@@ -35,7 +35,8 @@ class DevicePreviewVideoTrack(VideoStreamTrack):
     def __init__(self, session: DeviceSessionContext, fps: float = 20.0) -> None:
         super().__init__()
         self._session = session
-        self._frame_interval_s = 1.0 / max(1.0, fps)
+        normalized_fps = min(24.0, max(20.0, float(fps)))
+        self._frame_interval_s = 1.0 / normalized_fps
         self._next_pts = 0
         self._time_base = Fraction(1, 90000)
 

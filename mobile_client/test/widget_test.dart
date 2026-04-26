@@ -25,7 +25,7 @@ void main() {
     await tester.pumpWidget(const CameraAssistantApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Camera\nAssistant'), findsOneWidget);
+    expect(find.text('云影随行'), findsOneWidget);
     expect(find.text('登录'), findsOneWidget);
   });
 }

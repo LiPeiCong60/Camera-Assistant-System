@@ -5,6 +5,7 @@ import os
 import platform
 import queue
 import threading
+import time
 import urllib.request
 import zipfile
 from abc import ABC, abstractmethod
@@ -93,23 +94,25 @@ class MediaPipeVisionDetector(VisionDetector):
                 min_tracking_confidence=self._config.min_confidence,
             )
             self._pose = vision.PoseLandmarker.create_from_options(pose_options)
-            hand_model = self._ensure_model(
-                model_dir / "hand_landmarker.task",
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
-            )
-            hand_options = vision.HandLandmarkerOptions(
-                base_options=mp_python.BaseOptions(model_asset_path=str(hand_model)),
-                running_mode=vision.RunningMode.IMAGE,
-                num_hands=2,
-                min_hand_detection_confidence=self._config.min_confidence,
-                min_hand_presence_confidence=self._config.min_confidence,
-                min_tracking_confidence=self._config.min_confidence,
-            )
-            try:
-                self._hands = vision.HandLandmarker.create_from_options(hand_options)
-            except Exception as exc:
-                self._hands = None
-                self._logger.warning("HandLandmarker init failed, hand gesture features disabled: %s", exc)
+            self._hands = None
+            if self._config.enable_hand_landmarks:
+                hand_model = self._ensure_model(
+                    model_dir / "hand_landmarker.task",
+                    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+                )
+                hand_options = vision.HandLandmarkerOptions(
+                    base_options=mp_python.BaseOptions(model_asset_path=str(hand_model)),
+                    running_mode=vision.RunningMode.IMAGE,
+                    num_hands=2,
+                    min_hand_detection_confidence=self._config.min_confidence,
+                    min_hand_presence_confidence=self._config.min_confidence,
+                    min_tracking_confidence=self._config.min_confidence,
+                )
+                try:
+                    self._hands = vision.HandLandmarker.create_from_options(hand_options)
+                except Exception as exc:
+                    self._hands = None
+                    self._logger.warning("HandLandmarker init failed, hand gesture features disabled: %s", exc)
             self._face = None
             if self._config.enable_face_landmarks:
                 face_model = self._ensure_model(
@@ -187,6 +190,13 @@ class MediaPipeVisionDetector(VisionDetector):
                 label="face_center",
                 anchor_point=face_bbox.center,
             )
+        elif person_bbox is not None:
+            face_tracking_detection = DetectionResult(
+                bbox=person_bbox,
+                confidence=tracking_detection.confidence if tracking_detection else 0.75,
+                label="head_pose_fallback",
+                anchor_point=self._bbox_anchor(person_bbox, "face"),
+            )
 
         return VisionResult(
             tracking_detection=tracking_detection,
@@ -209,12 +219,14 @@ class MediaPipeVisionDetector(VisionDetector):
             min_detection_confidence=self._config.min_confidence,
             min_tracking_confidence=self._config.min_confidence,
         )
-        self._sol_hands = mp.solutions.hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=self._config.min_confidence,
-            min_tracking_confidence=self._config.min_confidence,
-        )
+        self._sol_hands = None
+        if self._config.enable_hand_landmarks:
+            self._sol_hands = mp.solutions.hands.Hands(
+                static_image_mode=False,
+                max_num_hands=2,
+                min_detection_confidence=self._config.min_confidence,
+                min_tracking_confidence=self._config.min_confidence,
+            )
         self._sol_face = None
         if self._config.enable_face_landmarks:
             self._sol_face = mp.solutions.face_mesh.FaceMesh(
@@ -230,7 +242,7 @@ class MediaPipeVisionDetector(VisionDetector):
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pose_res = self._sol_pose.process(rgb)
-        hand_res = self._sol_hands.process(rgb)
+        hand_res = self._sol_hands.process(rgb) if self._sol_hands is not None else None
         face_res = self._sol_face.process(rgb) if self._sol_face is not None else None
         h, w = frame.shape[:2]
 
@@ -262,24 +274,29 @@ class MediaPipeVisionDetector(VisionDetector):
                     and 0.0 <= r_sh.x <= 1.0
                     and 0.0 <= r_sh.y <= 1.0
                 )
+                upper_anchor: Point | None = None
+                face_anchor: Point | None = None
                 if l_ok and r_ok:
-                    anchor = Point(
+                    upper_anchor = Point(
                         x=((l_sh.x + r_sh.x) * 0.5) * w,
                         y=((l_sh.y + r_sh.y) * 0.5) * h,
                     )
                 elif l_ok:
-                    anchor = Point(x=l_sh.x * w, y=l_sh.y * h)
+                    upper_anchor = Point(x=l_sh.x * w, y=l_sh.y * h)
                 elif r_ok:
-                    anchor = Point(x=r_sh.x * w, y=r_sh.y * h)
-                elif (
+                    upper_anchor = Point(x=r_sh.x * w, y=r_sh.y * h)
+                if (
                     nose is not None
                     and nose.visibility >= 0.45
                     and 0.0 <= nose.x <= 1.0
                     and 0.0 <= nose.y <= 1.0
                 ):
-                    anchor = Point(x=nose.x * w, y=nose.y * h)
-                else:
-                    anchor = None
+                    face_anchor = Point(x=nose.x * w, y=nose.y * h)
+                anchor = self._select_anchor(
+                    bbox,
+                    upper_anchor=upper_anchor,
+                    face_anchor=face_anchor,
+                )
 
                 candidates.append(
                     DetectionResult(
@@ -287,15 +304,18 @@ class MediaPipeVisionDetector(VisionDetector):
                         confidence=0.9,
                         label="person_pose",
                         anchor_point=anchor,
-                        pose_landmarks=pose_landmarks or None,
+                        pose_landmarks=pose_landmarks or None
+                        if self._config.enable_pose_landmarks
+                        else None,
                     )
                 )
-            for s, e in POSE_EDGES:
-                if s >= len(lm) or e >= len(lm):
-                    continue
-                p1 = Point(x=lm[s].x * w, y=lm[s].y * h)
-                p2 = Point(x=lm[e].x * w, y=lm[e].y * h)
-                body_lines.append(LineSegment(start=p1, end=p2))
+            if self._config.enable_pose_landmarks:
+                for s, e in POSE_EDGES:
+                    if s >= len(lm) or e >= len(lm):
+                        continue
+                    p1 = Point(x=lm[s].x * w, y=lm[s].y * h)
+                    p2 = Point(x=lm[e].x * w, y=lm[e].y * h)
+                    body_lines.append(LineSegment(start=p1, end=p2))
 
         face_bbox = None
         face_lines: list[LineSegment] = []
@@ -321,7 +341,7 @@ class MediaPipeVisionDetector(VisionDetector):
 
         hand_points: list[list[Point]] = []
         hand_handedness: list[str] = []
-        if hand_res.multi_hand_landmarks:
+        if hand_res is not None and hand_res.multi_hand_landmarks:
             for i, hand in enumerate(hand_res.multi_hand_landmarks):
                 hand_points.append([Point(x=p.x * w, y=p.y * h) for p in hand.landmark])
                 label = "unknown"
@@ -339,6 +359,13 @@ class MediaPipeVisionDetector(VisionDetector):
                 confidence=0.85,
                 label="face_center",
                 anchor_point=face_bbox.center,
+            )
+        elif tracking_detection is not None:
+            face_tracking_detection = DetectionResult(
+                bbox=tracking_detection.bbox,
+                confidence=tracking_detection.confidence,
+                label="head_pose_fallback",
+                anchor_point=self._bbox_anchor(tracking_detection.bbox, "face"),
             )
         return VisionResult(
             tracking_detection=tracking_detection,
@@ -363,6 +390,30 @@ class MediaPipeVisionDetector(VisionDetector):
         nw = max(2, int(w * scale))
         nh = max(2, int(h * scale))
         return cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_AREA), scale
+
+    def _select_anchor(
+        self,
+        bbox: BBox,
+        *,
+        upper_anchor: Point | None = None,
+        face_anchor: Point | None = None,
+    ) -> Point:
+        mode = self._config.tracking_anchor_mode
+        if mode == "bbox_center":
+            return bbox.center
+        if mode == "upper_body":
+            return upper_anchor or self._bbox_anchor(bbox, "upper_body")
+        if mode == "face":
+            return face_anchor or self._bbox_anchor(bbox, "face")
+        return upper_anchor or face_anchor or self._bbox_anchor(bbox, "upper_body")
+
+    @staticmethod
+    def _bbox_anchor(bbox: BBox, mode: str) -> Point:
+        if mode == "face":
+            return Point(x=float(bbox.x + bbox.w * 0.5), y=float(bbox.y + bbox.h * 0.18))
+        if mode == "upper_body":
+            return Point(x=float(bbox.x + bbox.w * 0.5), y=float(bbox.y + bbox.h * 0.32))
+        return bbox.center
 
     @staticmethod
     def _scale_bbox(bbox: BBox | None, factor: float, max_w: int, max_h: int) -> BBox | None:
@@ -498,12 +549,13 @@ class MediaPipeVisionDetector(VisionDetector):
 
         lm_first = pose_res.pose_landmarks[0]
         body_lines: list[LineSegment] = []
-        for s, e in POSE_EDGES:
-            if lm_first[s].visibility < 0.45 or lm_first[e].visibility < 0.45:
-                continue
-            p1 = Point(x=lm_first[s].x * w, y=lm_first[s].y * h)
-            p2 = Point(x=lm_first[e].x * w, y=lm_first[e].y * h)
-            body_lines.append(LineSegment(start=p1, end=p2))
+        if self._config.enable_pose_landmarks:
+            for s, e in POSE_EDGES:
+                if lm_first[s].visibility < 0.45 or lm_first[e].visibility < 0.45:
+                    continue
+                p1 = Point(x=lm_first[s].x * w, y=lm_first[s].y * h)
+                p2 = Point(x=lm_first[e].x * w, y=lm_first[e].y * h)
+                body_lines.append(LineSegment(start=p1, end=p2))
 
         for landmarks in pose_res.pose_landmarks:
             bbox = self._bbox_from_landmarks(landmarks, w, h)
@@ -522,24 +574,28 @@ class MediaPipeVisionDetector(VisionDetector):
                 and 0.0 <= r_sh.x <= 1.0
                 and 0.0 <= r_sh.y <= 1.0
             )
-            anchor: Point | None = None
+            upper_anchor: Point | None = None
+            face_anchor: Point | None = None
             if l_ok and r_ok:
-                anchor = Point(
+                upper_anchor = Point(
                     x=((l_sh.x + r_sh.x) * 0.5) * w,
                     y=((l_sh.y + r_sh.y) * 0.5) * h,
                 )
             elif l_ok:
-                anchor = Point(x=l_sh.x * w, y=l_sh.y * h)
+                upper_anchor = Point(x=l_sh.x * w, y=l_sh.y * h)
             elif r_ok:
-                anchor = Point(x=r_sh.x * w, y=r_sh.y * h)
-            elif (
+                upper_anchor = Point(x=r_sh.x * w, y=r_sh.y * h)
+            if (
                 nose.visibility >= 0.35
                 and 0.0 <= nose.x <= 1.0
                 and 0.0 <= nose.y <= 1.0
             ):
-                anchor = Point(x=nose.x * w, y=nose.y * h)
-            if anchor is None:
-                anchor = bbox.center
+                face_anchor = Point(x=nose.x * w, y=nose.y * h)
+            anchor = self._select_anchor(
+                bbox,
+                upper_anchor=upper_anchor,
+                face_anchor=face_anchor,
+            )
                 
             pose_landmarks: dict[int, Point] = {}
             for idx in POSE_KEYPOINT_IDS:
@@ -557,7 +613,9 @@ class MediaPipeVisionDetector(VisionDetector):
                     confidence=0.93,
                     label="person_pose",
                     anchor_point=anchor,
-                    pose_landmarks=pose_landmarks or None,
+                    pose_landmarks=pose_landmarks or None
+                    if self._config.enable_pose_landmarks
+                    else None,
                 )
             )
         candidates.sort(key=lambda d: d.bbox.area, reverse=True)
@@ -686,7 +744,10 @@ class YoloOnlyVisionDetector(VisionDetector):
             bbox=bbox,
             confidence=conf,
             label="person_mp_yolo",
-            anchor_point=bbox.center,
+            anchor_point=MediaPipeVisionDetector._bbox_anchor(
+                bbox,
+                self._config.tracking_anchor_mode,
+            ),
             pose_landmarks=None,
         )
         return VisionResult(
@@ -699,7 +760,8 @@ class YoloOnlyVisionDetector(VisionDetector):
 class OpenCvHogVisionDetector(VisionDetector):
     """Last-resort detector that avoids torch/ultralytics entirely."""
 
-    def __init__(self) -> None:
+    def __init__(self, config: DetectionConfig | None = None) -> None:
+        self._config = config or DetectionConfig()
         self._hog = OpenCvHogPersonDetector()
 
     def detect(self, frame: np.ndarray) -> VisionResult:
@@ -710,7 +772,10 @@ class OpenCvHogVisionDetector(VisionDetector):
             bbox=bbox,
             confidence=conf,
             label="person_hog",
-            anchor_point=bbox.center,
+            anchor_point=MediaPipeVisionDetector._bbox_anchor(
+                bbox,
+                self._config.tracking_anchor_mode,
+            ),
             pose_landmarks=None,
         )
         return VisionResult(
@@ -774,18 +839,47 @@ class MediaPipeYoloVisionDetector(VisionDetector):
         person_bbox = yolo_bbox if yolo_bbox is not None else mp_result.person_bbox
         tracking_detection = candidates[0] if candidates else mp_result.tracking_detection
         if tracking_detection is not None and person_bbox is not None:
+            anchor = tracking_detection.anchor_point
+            if self._config.tracking_anchor_mode == "bbox_center":
+                anchor = person_bbox.center
+            elif anchor is None:
+                anchor = MediaPipeVisionDetector._bbox_anchor(
+                    person_bbox,
+                    self._config.tracking_anchor_mode,
+                )
             tracking_detection = DetectionResult(
                 bbox=person_bbox,
                 confidence=max(tracking_detection.confidence, yolo_conf),
                 label="person_mp_yolo",
-                anchor_point=tracking_detection.anchor_point,
+                anchor_point=anchor,
                 pose_landmarks=tracking_detection.pose_landmarks,
+            )
+        elif person_bbox is not None:
+            tracking_detection = DetectionResult(
+                bbox=person_bbox,
+                confidence=max(0.75, yolo_conf),
+                label="person_mp_yolo",
+                anchor_point=MediaPipeVisionDetector._bbox_anchor(
+                    person_bbox,
+                    self._config.tracking_anchor_mode,
+                ),
+                pose_landmarks=None,
+            )
+            candidates = [tracking_detection]
+
+        face_tracking_detection = mp_result.face_tracking_detection
+        if face_tracking_detection is None and person_bbox is not None:
+            face_tracking_detection = DetectionResult(
+                bbox=person_bbox,
+                confidence=tracking_detection.confidence if tracking_detection else 0.75,
+                label="head_pose_fallback",
+                anchor_point=MediaPipeVisionDetector._bbox_anchor(person_bbox, "face"),
             )
 
         return VisionResult(
             tracking_detection=tracking_detection,
             tracking_candidates=candidates or mp_result.tracking_candidates,
-            face_tracking_detection=mp_result.face_tracking_detection,
+            face_tracking_detection=face_tracking_detection,
             person_bbox=person_bbox,
             face_bbox=mp_result.face_bbox,
             body_skeleton=mp_result.body_skeleton,
@@ -875,7 +969,7 @@ def build_runtime_detector(
         return detector, "mediapipe"
     except Exception as exc:
         logger.warning("MediaPipe detector unavailable, fallback to OpenCV HOG: %s", exc)
-        return OpenCvHogVisionDetector(), "opencv_hog"
+        return OpenCvHogVisionDetector(config), "opencv_hog"
 
 
 def _should_enable_yolo() -> bool:
@@ -905,6 +999,7 @@ class AsyncDetector:
         self._result_lock = threading.Lock()
         self._last_result = VisionResult()
         self._last_seq = -1
+        self._last_result_at: float | None = None
         self._next_seq = 0
         self._stop_event = threading.Event()
         self._last_error: Exception | None = None
@@ -943,6 +1038,11 @@ class AsyncDetector:
             return self._last_seq, self._last_result
 
     @property
+    def last_result_at(self) -> float | None:
+        with self._result_lock:
+            return self._last_result_at
+
+    @property
     def last_error(self) -> Exception | None:
         with self._result_lock:
             return self._last_error
@@ -967,4 +1067,5 @@ class AsyncDetector:
             with self._result_lock:
                 self._last_seq = seq
                 self._last_result = result
+                self._last_result_at = time.time()
                 self._last_error = None

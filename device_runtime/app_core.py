@@ -158,7 +158,13 @@ def reliable_detection(
     """Filter out unreliable detections by area ratio and confidence."""
     if detection is None:
         return None
-    if detection.label not in {"person_pose", "person_mp_yolo", "face_center", "head_pose_fallback"}:
+    if detection.label not in {
+        "person_pose",
+        "person_mp_yolo",
+        "person_hog",
+        "face_center",
+        "head_pose_fallback",
+    }:
         return None
     h, w = frame_shape[:2]
     area_ratio = detection.bbox.area / float(max(1, h * w))

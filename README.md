@@ -1,6 +1,6 @@
-# Camera Assistant
+# ????
 
-Camera Assistant 是一个面向手机拍摄辅助、设备联动、AI 图片分析和运营管理的多端项目。当前仓库由 `mobile_client`、`device_runtime`、`backend`、`admin_web`、`database` 五部分组成。
+???? 是一个面向手机拍摄辅助、设备联动、AI 图片分析和运营管理的多端项目。当前仓库由 `mobile_client`、`device_runtime`、`backend`、`admin_web`、`database` 五部分组成。
 
 设备联动主视频链路已经改为 WebRTC：Flutter App 使用 `flutter_webrtc` 把手机摄像头 video track 推到 `device_runtime`，设备端使用 Python `aiortc` 接收并转成 OpenCV frame，继续进入检测、骨架、构图、云台控制和预览渲染流程，再通过 WebRTC 返回处理后的预览 video track。旧的 WebSocket NV21 推流、WebSocket JPEG 预览和 JPEG fallback 接口仍保留。
 

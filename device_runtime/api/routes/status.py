@@ -13,14 +13,21 @@ from device_runtime.api.session_manager import session_manager
 
 router = APIRouter(tags=["device-status"])
 
-PREVIEW_WS_INTERVAL_S = 1.0 / 20.0
+def _preview_interval_s(preview_fps: float) -> float:
+    normalized_fps = min(24.0, max(20.0, float(preview_fps)))
+    return 1.0 / normalized_fps
 
 
 class OverlayConfigRequest(BaseModel):
     enabled: bool | None = None
     show_live_person_bbox: bool | None = None
     show_live_body_skeleton: bool | None = None
+    show_live_face_mesh: bool | None = None
     show_live_hands: bool | None = None
+    show_tracking_anchor: bool | None = None
+    show_body_skeleton: bool | None = None
+    show_face_mesh: bool | None = None
+    show_hands: bool | None = None
     show_template_bbox: bool | None = None
     show_template_skeleton: bool | None = None
     show_ai_lock_box: bool | None = None
@@ -117,12 +124,11 @@ async def preview_stream(websocket: WebSocket) -> None:
             try:
                 jpeg_bytes = await asyncio.to_thread(
                     session.get_preview_jpeg_bytes,
-                    quality=65,
                 )
             except ValueError:
-                await asyncio.sleep(PREVIEW_WS_INTERVAL_S)
+                await asyncio.sleep(_preview_interval_s(session.config.app.ui_refresh_fps))
                 continue
             await websocket.send_bytes(jpeg_bytes)
-            await asyncio.sleep(PREVIEW_WS_INTERVAL_S)
+            await asyncio.sleep(_preview_interval_s(session.config.app.ui_refresh_fps))
     except WebSocketDisconnect:
         return

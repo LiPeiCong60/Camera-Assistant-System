@@ -18,6 +18,7 @@ import '../../services/api_client.dart';
 import '../../services/local_image_resolver.dart';
 import '../../services/media_pipe_pose_detector_service.dart';
 import '../../services/mobile_api_service.dart';
+import '../../utils/score_formatter.dart';
 import '../device_link/device_link_page.dart';
 import '../overlay/camera_overlay_painter.dart';
 import '../overlay/overlay_scene.dart';
@@ -1231,10 +1232,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   String? _analysisScoreLabel() {
     final score = _lastAiTask?.resultScore;
-    if (score == null) {
-      return null;
-    }
-    return score.toStringAsFixed(2);
+    return ScoreFormatter.formatHundred(score);
   }
 
   String _deviceFlowStatusLabel() {

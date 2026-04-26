@@ -13,7 +13,13 @@ from typing import Any
 import cv2
 
 from device_runtime.app_core import build_draw_vision
-from device_runtime.config import GimbalConfig, default_config
+from device_runtime.config import (
+    GimbalConfig,
+    RaspberryPiProfile,
+    SystemConfig,
+    apply_rpi_profile,
+    default_config,
+)
 from device_runtime.control.gimbal_controller import (
     GimbalController,
     MockServoDriver,
@@ -92,6 +98,25 @@ def _env_float(name: str, default: float) -> float:
     return float(value)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env_text(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    value = _env_text(name)
+    if value is None:
+        return default
+    normalized = value.lower()
+    if normalized not in choices:
+        raise RuntimeError(
+            f"Unsupported {name}. Expected one of: {', '.join(sorted(choices))}."
+        )
+    return normalized
+
+
 def _resolve_driver_kind() -> str:
     configured = _env_text("DEVICE_SERVO_DRIVER")
     if configured is not None:
@@ -122,6 +147,89 @@ def _apply_gimbal_env_overrides(config: GimbalConfig) -> None:
     config.tilt.max_angle = _env_float("DEVICE_TILT_MAX_ANGLE", config.tilt.max_angle)
     config.tilt.home_angle = _env_float("DEVICE_TILT_HOME_ANGLE", config.tilt.home_angle)
     config.tilt.max_step_deg = _env_float("DEVICE_TILT_MAX_STEP_DEG", config.tilt.max_step_deg)
+
+
+def _resolve_rpi_profile() -> RaspberryPiProfile | None:
+    mode = (_env_text("DEVICE_RPI_PROFILE") or "").lower()
+    if not mode:
+        return None
+    if mode == "performance":
+        return RaspberryPiProfile.performance()
+    if mode == "balanced":
+        return RaspberryPiProfile.balanced()
+    if mode == "quality":
+        return RaspberryPiProfile.quality()
+    raise RuntimeError(
+        "Unsupported DEVICE_RPI_PROFILE. Expected `performance`, `balanced`, or `quality`."
+    )
+
+
+def _apply_runtime_env_overrides(config: SystemConfig) -> None:
+    profile = _resolve_rpi_profile()
+    if profile is not None:
+        apply_rpi_profile(config, profile)
+
+    config.detection.detector_fps = _env_float(
+        "DEVICE_DETECTOR_FPS",
+        config.detection.detector_fps,
+    )
+    config.detection.max_inference_side = _env_int(
+        "DEVICE_MAX_INFERENCE_SIDE",
+        config.detection.max_inference_side,
+    )
+    config.detection.async_skip_frames = _env_int(
+        "DEVICE_ASYNC_SKIP_FRAMES",
+        config.detection.async_skip_frames,
+    )
+    config.detection.enable_pose_landmarks = _env_bool(
+        "DEVICE_ENABLE_POSE_LANDMARKS",
+        config.detection.enable_pose_landmarks,
+    )
+    config.detection.enable_face_landmarks = _env_bool(
+        "DEVICE_ENABLE_FACE_LANDMARKS",
+        config.detection.enable_face_landmarks,
+    )
+    config.detection.enable_hand_landmarks = _env_bool(
+        "DEVICE_ENABLE_HAND_LANDMARKS",
+        config.detection.enable_hand_landmarks,
+    )
+    config.detection.tracking_anchor_mode = _env_choice(
+        "DEVICE_TRACKING_ANCHOR_MODE",
+        config.detection.tracking_anchor_mode,
+        {"bbox_center", "upper_body", "face", "auto"},
+    )
+    config.app.ui_refresh_fps = _env_float(
+        "DEVICE_PREVIEW_FPS",
+        config.app.ui_refresh_fps,
+    )
+    config.app.preview_scale = _env_float(
+        "DEVICE_PREVIEW_SCALE",
+        config.app.preview_scale,
+    )
+    config.app.preview_jpeg_quality = _env_int(
+        "DEVICE_PREVIEW_JPEG_QUALITY",
+        config.app.preview_jpeg_quality,
+    )
+    config.app.enable_overlay = _env_bool(
+        "DEVICE_ENABLE_OVERLAY",
+        config.app.enable_overlay,
+    )
+    config.app.show_body_skeleton = _env_bool(
+        "DEVICE_SHOW_BODY_SKELETON",
+        config.app.show_body_skeleton,
+    )
+    config.app.show_face_mesh = _env_bool(
+        "DEVICE_SHOW_FACE_MESH",
+        config.app.show_face_mesh,
+    )
+    config.app.show_hands = _env_bool(
+        "DEVICE_SHOW_HANDS",
+        config.app.show_hands,
+    )
+    config.app.show_tracking_anchor = _env_bool(
+        "DEVICE_SHOW_TRACKING_ANCHOR",
+        config.app.show_tracking_anchor,
+    )
 
 
 def _build_servo_driver(config: GimbalConfig) -> ServoDriver:
@@ -158,6 +266,7 @@ class DeviceSessionContext:
         self.opened_at = time.time()
 
         self.config = default_config(payload.stream_url)
+        _apply_runtime_env_overrides(self.config)
         _apply_gimbal_env_overrides(self.config.gimbal)
         self.runtime_state = RuntimeState()
         self.mode_manager = ModeManager(initial_mode=ControlMode(payload.start_mode))
@@ -174,11 +283,16 @@ class DeviceSessionContext:
             manual_step_deg=self.config.app.manual_step_deg,
         )
         self._logger.info(
-            "device_runtime servo driver=%s pan_servo_id=%s tilt_servo_id=%s ttl_port=%s",
+            "device_runtime servo driver=%s pan_servo_id=%s tilt_servo_id=%s ttl_port=%s detector_fps=%.2f skip_frames=%s preview_fps=%.2f preview_scale=%.2f preview_jpeg_quality=%s",
             self.config.gimbal.driver_kind,
             self.config.gimbal.pan.servo_id,
             self.config.gimbal.tilt.servo_id,
             self.config.gimbal.ttl_bus.port if self.config.gimbal.driver_kind == "ttl_bus" else "n/a",
+            self.config.detection.detector_fps,
+            self.config.detection.async_skip_frames,
+            self.config.app.ui_refresh_fps,
+            self.config.app.preview_scale,
+            self.config.app.preview_jpeg_quality,
         )
         self.template_library = template_library or TemplateLibrary()
         self.template_repository = template_repository or LocalTemplateRepository(
@@ -213,6 +327,9 @@ class DeviceSessionContext:
         self._overlay_settings = OverlaySettings(
             enabled=self.config.app.enable_overlay,
             show_live_body_skeleton=self.config.app.show_body_skeleton,
+            show_live_face_mesh=self.config.app.show_face_mesh,
+            show_live_hands=self.config.app.show_hands,
+            show_tracking_anchor=self.config.app.show_tracking_anchor,
         )
         self._gesture_settings = GestureSettings()
         self._gesture_state = GestureCaptureState()
@@ -268,6 +385,8 @@ class DeviceSessionContext:
 
         self.stream_url = stream_url
         self.config = default_config(stream_url)
+        _apply_runtime_env_overrides(self.config)
+        _apply_gimbal_env_overrides(self.config.gimbal)
         self.source = build_video_source(self.config.video)
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
         self._last_submit_ts = 0.0
@@ -364,6 +483,22 @@ class DeviceSessionContext:
             "last_runtime_error": self.runtime_state.last_runtime_error,
             "last_frame_at": self.runtime_state.last_frame_at,
             "last_detection_at": self.runtime_state.last_detection_at,
+            "runtime_config": {
+                "detector_fps": self.config.detection.detector_fps,
+                "async_skip_frames": self.config.detection.async_skip_frames,
+                "max_inference_side": self.config.detection.max_inference_side,
+                "preview_fps": self.config.app.ui_refresh_fps,
+                "preview_scale": self.config.app.preview_scale,
+                "preview_jpeg_quality": self.config.app.preview_jpeg_quality,
+                "enable_pose_landmarks": self.config.detection.enable_pose_landmarks,
+                "enable_face_landmarks": self.config.detection.enable_face_landmarks,
+                "enable_hand_landmarks": self.config.detection.enable_hand_landmarks,
+                "tracking_anchor_mode": self.config.detection.tracking_anchor_mode,
+                "detector_backend": self.runtime_state.detector_backend,
+                "last_frame_at": self.runtime_state.last_frame_at,
+                "last_detection_at": self.runtime_state.last_detection_at,
+                "overlay": self._overlay_settings.as_dict(),
+            },
             "ai_provider_status": ai_provider_status,
             "latest_capture": latest_capture,
             "current_pan": round(float(current_pan), 3),
@@ -490,7 +625,7 @@ class DeviceSessionContext:
                 now=now,
             )
             if processed.stable_detection is not None:
-                self.runtime_state.last_detection_at = now
+                self.runtime_state.last_detection_at = self._async_detector.last_result_at or now
                 self._update_ai_lock_fit_score(processed.stable_detection, frame.shape)
 
             self._update_gesture_state(processed, vision, now)
@@ -583,10 +718,13 @@ class DeviceSessionContext:
             context=self.build_ai_context(),
         )
 
-    def get_preview_jpeg_bytes(self, *, quality: int = 75) -> bytes:
+    def get_preview_jpeg_bytes(self, *, quality: int | None = None) -> bytes:
         frame = self.get_preview_frame()
 
-        normalized_quality = max(35, min(95, int(quality)))
+        configured_quality = (
+            self.config.app.preview_jpeg_quality if quality is None else quality
+        )
+        normalized_quality = max(35, min(95, int(configured_quality)))
         success, encoded = cv2.imencode(
             ".jpg",
             frame,
@@ -627,9 +765,25 @@ class DeviceSessionContext:
             if self.runtime_state.ai_lock_mode_enabled
             else None,
         )
+        app_config = getattr(getattr(self, "config", None), "app", None)
+        preview_scale = getattr(app_config, "preview_scale", 1.0)
+        scale = max(0.1, min(1.0, float(preview_scale)))
+        if scale < 0.999:
+            height, width = preview.shape[:2]
+            preview = cv2.resize(
+                preview,
+                (max(2, int(width * scale)), max(2, int(height * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
         return preview
 
     def _update_gesture_state(self, processed, vision: VisionResult, now: float) -> None:
+        if not self.config.detection.enable_hand_landmarks:
+            self._last_hand_count = 0
+            self._last_hands_detected = False
+            self._gesture_state.reset()
+            return
+
         hands = vision.hand_landmarks or []
         self._last_hand_count = len(hands)
         self._last_hands_detected = any(len(hand) >= 21 for hand in hands)

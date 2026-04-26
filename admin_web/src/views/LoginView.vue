@@ -35,7 +35,7 @@ async function submit() {
     <div class="login-layout">
       <section class="login-hero">
         <p class="login-kicker">ADMIN CONSOLE</p>
-        <h1>Camera<br />Assistant</h1>
+        <h1>云影<br />随行</h1>
         <p class="login-description">管理后台登录</p>
       </section>
 
@@ -118,10 +118,10 @@ async function submit() {
 
 .login-hero h1 {
   margin: 24px 0 0;
-  font-size: clamp(64px, 9vw, 118px);
-  line-height: 0.9;
+  font-size: clamp(72px, 9vw, 116px);
+  line-height: 0.98;
   font-weight: 800;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
   color: #fffdf8;
   text-wrap: balance;
 }

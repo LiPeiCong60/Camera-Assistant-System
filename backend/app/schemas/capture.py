@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from pydantic import Field
 
+from backend.app.schemas.ai_task import AiTaskRead
 from backend.app.schemas.base import SchemaModel
 
 
@@ -23,6 +24,7 @@ class CaptureRead(SchemaModel):
     is_ai_selected: bool
     score: Decimal | None = None
     metadata: dict = Field(default_factory=dict, validation_alias="capture_metadata", serialization_alias="metadata")
+    latest_ai_task: AiTaskRead | None = None
     created_at: datetime
     updated_at: datetime
 

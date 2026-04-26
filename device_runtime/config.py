@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
+TrackingAnchorMode = Literal["bbox_center", "upper_body", "face", "auto"]
+
+
 @dataclass(slots=True)
 class VideoSourceConfig:
     stream_url: str
@@ -20,7 +23,10 @@ class DetectionConfig:
     max_inference_side: int = 960
     yolo_every_n_frames: int = 2
     yolo_bbox_smooth_alpha: float = 0.4
+    enable_pose_landmarks: bool = True
     enable_face_landmarks: bool = True
+    enable_hand_landmarks: bool = True
+    tracking_anchor_mode: TrackingAnchorMode = "auto"
     async_skip_frames: int = 0  # 智能跳帧：0=禁用，1=每2帧检测1次，2=每3帧检测1次
 
 
@@ -73,11 +79,14 @@ class TrackingConfig:
 @dataclass(slots=True)
 class AppConfig:
     manual_step_deg: float = 3.0
-    ui_refresh_fps: float = 30.0
+    ui_refresh_fps: float = 24.0
     preview_scale: float = 1.0
+    preview_jpeg_quality: int = 82
     enable_overlay: bool = True
     show_body_skeleton: bool = True
     show_face_mesh: bool = True
+    show_hands: bool = True
+    show_tracking_anchor: bool = False
 
 
 @dataclass(slots=True)
@@ -121,17 +130,23 @@ class RaspberryPiProfile:
     detector_fps: float = 8.0
     max_inference_side: int = 640
     yolo_every_n_frames: int = 3
+    enable_pose_landmarks: bool = True
     enable_face_landmarks: bool = False
+    enable_hand_landmarks: bool = True
+    tracking_anchor_mode: TrackingAnchorMode = "auto"
     async_skip_frames: int = 0  # 智能跳帧
 
     # 预览配置
     preview_fps: float = 20.0
     preview_scale: float = 0.6
+    preview_jpeg_quality: int = 82
 
     # 显示配置
     enable_overlay: bool = True
     show_face_mesh: bool = False
     show_body_skeleton: bool = True
+    show_hands: bool = True
+    show_tracking_anchor: bool = False
 
     # AI 任务节流
     ai_task_throttle_s: float = 2.0
@@ -144,13 +159,19 @@ class RaspberryPiProfile:
             detector_fps=6.0,
             max_inference_side=480,
             yolo_every_n_frames=4,
+            enable_pose_landmarks=False,
             enable_face_landmarks=False,
+            enable_hand_landmarks=False,
+            tracking_anchor_mode="upper_body",
             async_skip_frames=1,  # 每2帧检测1次
-            preview_fps=15.0,
-            preview_scale=0.5,
+            preview_fps=20.0,
+            preview_scale=0.75,
+            preview_jpeg_quality=76,
             enable_overlay=True,
             show_face_mesh=False,
-            show_body_skeleton=True,
+            show_body_skeleton=False,
+            show_hands=False,
+            show_tracking_anchor=True,
             ai_task_throttle_s=3.0,
         )
 
@@ -162,13 +183,18 @@ class RaspberryPiProfile:
             detector_fps=8.0,
             max_inference_side=640,
             yolo_every_n_frames=3,
+            enable_pose_landmarks=False,
             enable_face_landmarks=False,
+            enable_hand_landmarks=False,
+            tracking_anchor_mode="auto",
             async_skip_frames=0,  # 不跳帧
-            preview_fps=20.0,
-            preview_scale=0.6,
+            preview_fps=24.0,
+            preview_scale=0.9,
+            preview_jpeg_quality=82,
             enable_overlay=True,
             show_face_mesh=False,
-            show_body_skeleton=True,
+            show_body_skeleton=False,
+            show_hands=False,
             ai_task_throttle_s=2.0,
         )
 
@@ -180,13 +206,18 @@ class RaspberryPiProfile:
             detector_fps=10.0,
             max_inference_side=800,
             yolo_every_n_frames=2,
+            enable_pose_landmarks=True,
             enable_face_landmarks=True,
+            enable_hand_landmarks=True,
+            tracking_anchor_mode="auto",
             async_skip_frames=0,  # 不跳帧
-            preview_fps=25.0,
-            preview_scale=0.8,
+            preview_fps=24.0,
+            preview_scale=1.0,
+            preview_jpeg_quality=88,
             enable_overlay=True,
             show_face_mesh=False,
             show_body_skeleton=True,
+            show_hands=True,
             ai_task_throttle_s=1.5,
         )
 
@@ -201,11 +232,17 @@ def apply_rpi_profile(cfg: SystemConfig, profile: RaspberryPiProfile) -> None:
     cfg.detection.max_inference_side = profile.max_inference_side
     cfg.detection.yolo_every_n_frames = profile.yolo_every_n_frames
     cfg.detection.async_skip_frames = profile.async_skip_frames
+    cfg.detection.enable_pose_landmarks = profile.enable_pose_landmarks
     cfg.detection.enable_face_landmarks = profile.enable_face_landmarks
+    cfg.detection.enable_hand_landmarks = profile.enable_hand_landmarks
+    cfg.detection.tracking_anchor_mode = profile.tracking_anchor_mode
 
     cfg.app.ui_refresh_fps = profile.preview_fps
     cfg.app.preview_scale = profile.preview_scale
+    cfg.app.preview_jpeg_quality = profile.preview_jpeg_quality
     cfg.app.enable_overlay = profile.enable_overlay
     cfg.app.show_face_mesh = profile.show_face_mesh
     cfg.app.show_body_skeleton = profile.show_body_skeleton
+    cfg.app.show_hands = profile.show_hands
+    cfg.app.show_tracking_anchor = profile.show_tracking_anchor
 

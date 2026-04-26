@@ -1,3 +1,5 @@
+import 'ai_task_summary.dart';
+
 class CaptureRecord {
   const CaptureRecord({
     required this.id,
@@ -12,6 +14,7 @@ class CaptureRecord {
     this.width,
     this.height,
     this.score,
+    this.latestAiTask,
     this.metadata = const <String, dynamic>{},
   });
 
@@ -26,6 +29,7 @@ class CaptureRecord {
   final int? width;
   final int? height;
   final num? score;
+  final AiTaskSummary? latestAiTask;
   final DateTime createdAt;
   final Map<String, dynamic> metadata;
 
@@ -42,6 +46,11 @@ class CaptureRecord {
       width: json['width'] as int?,
       height: json['height'] as int?,
       score: json['score'] as num?,
+      latestAiTask: json['latest_ai_task'] is Map<String, dynamic>
+          ? AiTaskSummary.fromJson(
+              json['latest_ai_task'] as Map<String, dynamic>,
+            )
+          : null,
       createdAt: DateTime.parse(
         json['created_at'] as String? ?? DateTime.now().toIso8601String(),
       ),
@@ -63,6 +72,7 @@ class CaptureRecord {
       'width': width,
       'height': height,
       'score': score,
+      'latest_ai_task': latestAiTask?.toJson(),
       'created_at': createdAt.toIso8601String(),
       'metadata': metadata,
     };

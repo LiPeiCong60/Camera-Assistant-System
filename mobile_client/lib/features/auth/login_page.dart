@@ -85,37 +85,10 @@ class _LoginPageState extends State<LoginPage> {
                         animation: widget.controller,
                         builder: (context, _) {
                           return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: <Widget>[
-                              Text(
-                                'USER LOGIN',
-                                style: Theme.of(context).textTheme.labelLarge
-                                    ?.copyWith(
-                                      color: const Color(0xFF32535F),
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: 3.2,
-                                    ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Camera\nAssistant',
-                                style: Theme.of(context).textTheme.displayLarge
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                      color: const Color(0xFF17313A),
-                                      height: 0.92,
-                                    ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '用户端登录',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(
-                                      color: const Color(0xFF17313A),
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
+                              const _LoginBrandHeader(),
                               const SizedBox(height: 28),
                               Card(
                                 child: Padding(
@@ -275,6 +248,81 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LoginBrandHeader extends StatelessWidget {
+  const _LoginBrandHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        Container(
+          width: 104,
+          height: 104,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.94),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: const Color(0x1A0D5C63)),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x1F17313A),
+                blurRadius: 26,
+                offset: Offset(0, 14),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Image.asset(
+              'assets/branding/app_logo.png',
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Text(
+          'USER LOGIN',
+          textAlign: TextAlign.center,
+          style: textTheme.labelLarge?.copyWith(
+            color: const Color(0xFF32535F),
+            fontWeight: FontWeight.w700,
+            letterSpacing: 3.2,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '云影随行',
+              maxLines: 1,
+              textAlign: TextAlign.center,
+              style: textTheme.displayMedium?.copyWith(
+                color: const Color(0xFF17313A),
+                fontWeight: FontWeight.w800,
+                height: 1.05,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '用户端登录',
+          textAlign: TextAlign.center,
+          style: textTheme.titleMedium?.copyWith(
+            color: const Color(0xFF17313A),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
     );
   }
 }

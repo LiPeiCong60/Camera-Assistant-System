@@ -37,6 +37,10 @@ class DeviceWebRtcService {
 
   static const Duration _requestTimeout = Duration(seconds: 12);
   static const Duration _iceGatheringTimeout = Duration(seconds: 3);
+  static const int _rpiPreferredVideoWidth = 960;
+  static const int _rpiPreferredVideoHeight = 540;
+  static const int _rpiPreferredVideoFrameRate = 24;
+  static const int _rpiMinVideoFrameRate = 20;
 
   Future<DeviceWebRtcSession> start({
     required String baseUrl,
@@ -70,10 +74,27 @@ class DeviceWebRtcService {
       localStream = await navigator.mediaDevices.getUserMedia(<String, dynamic>{
         'audio': false,
         'video': <String, dynamic>{
+          // Keep WebRTC clear without pushing the Raspberry Pi past a stable
+          // preview range.
           'mandatory': <String, dynamic>{
             'minWidth': '640',
-            'minHeight': '480',
-            'minFrameRate': '20',
+            'minHeight': '360',
+            'maxWidth': '$_rpiPreferredVideoWidth',
+            'maxHeight': '$_rpiPreferredVideoHeight',
+            'minFrameRate': '$_rpiMinVideoFrameRate',
+            'maxFrameRate': '$_rpiPreferredVideoFrameRate',
+          },
+          'width': <String, dynamic>{
+            'ideal': _rpiPreferredVideoWidth,
+            'max': _rpiPreferredVideoWidth,
+          },
+          'height': <String, dynamic>{
+            'ideal': _rpiPreferredVideoHeight,
+            'max': _rpiPreferredVideoHeight,
+          },
+          'frameRate': <String, dynamic>{
+            'ideal': _rpiPreferredVideoFrameRate,
+            'max': _rpiPreferredVideoFrameRate,
           },
           'facingMode': lensDirection == CameraLensDirection.front
               ? 'user'

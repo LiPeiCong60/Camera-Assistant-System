@@ -1,6 +1,6 @@
 # admin_web
 
-Camera Assistant 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。它只访问业务后端 `backend`，用于运营管理和数据回看，不直接连接 `device_runtime`。
+???? 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。它只访问业务后端 `backend`，用于运营管理和数据回看，不直接连接 `device_runtime`。
 
 ## 职责
 

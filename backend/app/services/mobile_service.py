@@ -170,7 +170,42 @@ class MobileService:
         return capture
 
     def list_history_captures(self, user: User):
-        return self.capture_repo.list_by_user(user.id)
+        captures = self.capture_repo.list_by_user(user.id)
+        if not captures:
+            return []
+
+        capture_ids = [capture.id for capture in captures]
+        task_stmt = (
+            select(AiTask)
+            .where(AiTask.user_id == user.id)
+            .where(AiTask.capture_id.in_(capture_ids))
+            .order_by(AiTask.capture_id.asc(), AiTask.created_at.desc(), AiTask.id.desc())
+        )
+        latest_tasks: dict[int, AiTask] = {}
+        for task in self.session.scalars(task_stmt):
+            if task.capture_id is not None and task.capture_id not in latest_tasks:
+                latest_tasks[task.capture_id] = task
+
+        return [
+            {
+                "id": capture.id,
+                "session_id": capture.session_id,
+                "user_id": capture.user_id,
+                "capture_type": capture.capture_type,
+                "file_url": capture.file_url,
+                "thumbnail_url": capture.thumbnail_url,
+                "width": capture.width,
+                "height": capture.height,
+                "storage_provider": capture.storage_provider,
+                "is_ai_selected": capture.is_ai_selected,
+                "score": capture.score,
+                "metadata": capture.capture_metadata,
+                "latest_ai_task": latest_tasks.get(capture.id),
+                "created_at": capture.created_at,
+                "updated_at": capture.updated_at,
+            }
+            for capture in captures
+        ]
 
     def create_analyze_photo_task(self, user: User, payload: AnalyzePhotoRequest) -> AiTask:
         capture = self._validate_session_capture(user, payload.session_id, payload.capture_id)

@@ -16,6 +16,7 @@ class DeviceStatusSummary {
     this.gestureStatus = const DeviceGestureStatusSummary(),
     this.latestCapture = const DeviceLatestCaptureSummary(),
     this.aiStatus = const DeviceAiStatusSummary(),
+    this.runtimeConfig = const DeviceRuntimeConfigSummary(),
     this.aiLockEnabled = false,
     this.aiLockFitScore = 0,
     this.aiLockTargetBoxNorm,
@@ -37,6 +38,7 @@ class DeviceStatusSummary {
   final DeviceGestureStatusSummary gestureStatus;
   final DeviceLatestCaptureSummary latestCapture;
   final DeviceAiStatusSummary aiStatus;
+  final DeviceRuntimeConfigSummary runtimeConfig;
   final bool aiLockEnabled;
   final double aiLockFitScore;
   final List<double>? aiLockTargetBoxNorm;
@@ -75,6 +77,9 @@ class DeviceStatusSummary {
         json['latest_capture'] as Map<String, dynamic>?,
       ),
       aiStatus: aiStatus,
+      runtimeConfig: DeviceRuntimeConfigSummary.fromJson(
+        json['runtime_config'] as Map<String, dynamic>?,
+      ),
       aiLockEnabled: aiLockStatus?['enabled'] as bool? ?? aiStatus.lockEnabled,
       aiLockFitScore:
           (aiLockStatus?['fit_score'] as num?)?.toDouble() ??
@@ -85,6 +90,56 @@ class DeviceStatusSummary {
                 .map((value) => value.toDouble())
                 .toList(growable: false)
           : aiStatus.lockTargetBoxNorm,
+    );
+  }
+}
+
+class DeviceRuntimeConfigSummary {
+  const DeviceRuntimeConfigSummary({
+    this.detectorFps = 0,
+    this.asyncSkipFrames = 0,
+    this.maxInferenceSide = 0,
+    this.previewFps = 0,
+    this.previewScale = 1,
+    this.enablePoseLandmarks = true,
+    this.enableFaceLandmarks = true,
+    this.enableHandLandmarks = true,
+    this.trackingAnchorMode = 'auto',
+    this.detectorBackend,
+    this.lastFrameAt,
+    this.lastDetectionAt,
+  });
+
+  final double detectorFps;
+  final int asyncSkipFrames;
+  final int maxInferenceSide;
+  final double previewFps;
+  final double previewScale;
+  final bool enablePoseLandmarks;
+  final bool enableFaceLandmarks;
+  final bool enableHandLandmarks;
+  final String trackingAnchorMode;
+  final String? detectorBackend;
+  final DateTime? lastFrameAt;
+  final DateTime? lastDetectionAt;
+
+  factory DeviceRuntimeConfigSummary.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const DeviceRuntimeConfigSummary();
+    }
+    return DeviceRuntimeConfigSummary(
+      detectorFps: (json['detector_fps'] as num?)?.toDouble() ?? 0,
+      asyncSkipFrames: (json['async_skip_frames'] as num?)?.toInt() ?? 0,
+      maxInferenceSide: (json['max_inference_side'] as num?)?.toInt() ?? 0,
+      previewFps: (json['preview_fps'] as num?)?.toDouble() ?? 0,
+      previewScale: (json['preview_scale'] as num?)?.toDouble() ?? 1,
+      enablePoseLandmarks: json['enable_pose_landmarks'] as bool? ?? true,
+      enableFaceLandmarks: json['enable_face_landmarks'] as bool? ?? true,
+      enableHandLandmarks: json['enable_hand_landmarks'] as bool? ?? true,
+      trackingAnchorMode: json['tracking_anchor_mode'] as String? ?? 'auto',
+      detectorBackend: json['detector_backend'] as String?,
+      lastFrameAt: _readTimestamp(json['last_frame_at']),
+      lastDetectionAt: _readTimestamp(json['last_detection_at']),
     );
   }
 }

@@ -4,8 +4,10 @@ import 'package:intl/intl.dart';
 import '../../models/capture_record.dart';
 import '../../models/capture_session_summary.dart';
 import '../../services/api_client.dart';
+import '../../services/gallery_save_service.dart';
 import '../../services/local_image_resolver.dart';
 import '../../services/mobile_api_service.dart';
+import '../../utils/score_formatter.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({
@@ -26,6 +28,9 @@ class _HistoryPageState extends State<HistoryPage>
   late final TabController _tabController;
   List<CaptureSessionSummary> _sessions = const <CaptureSessionSummary>[];
   List<CaptureRecord> _captures = const <CaptureRecord>[];
+  final Set<int> _savingCaptureIds = <int>{};
+  final Set<int> _savedCaptureIds = <int>{};
+  final GallerySaveService _gallerySaveService = const GallerySaveService();
   bool _isLoading = true;
   bool _isBatchPicking = false;
   String? _errorMessage;
@@ -198,8 +203,68 @@ class _HistoryPageState extends State<HistoryPage>
     return candidates.first;
   }
 
+  Future<void> _saveCaptureToGallery(CaptureRecord capture) async {
+    final source = LocalImageResolver.resolveCaptureRecordSource(capture);
+    if (source == null) {
+      setState(() {
+        _errorMessage = '这张抓拍没有可保存的图片地址。';
+      });
+      return;
+    }
+
+    setState(() {
+      _savingCaptureIds.add(capture.id);
+      _errorMessage = null;
+      _noticeMessage = null;
+    });
+
+    try {
+      await _gallerySaveService.saveImageSource(
+        source: source,
+        fileName: _galleryFileName(capture),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _savedCaptureIds.add(capture.id);
+        _noticeMessage = '抓拍 #${capture.id} 已保存到手机相册。';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '保存到手机相册失败：$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingCaptureIds.remove(capture.id);
+        });
+      }
+    }
+  }
+
+  String _galleryFileName(CaptureRecord capture) {
+    final extension = _fileExtension(capture.fileUrl) ?? 'jpg';
+    return 'cloud_shadow_capture_${capture.id}.$extension';
+  }
+
+  String? _fileExtension(String rawPath) {
+    final path = Uri.tryParse(rawPath)?.path ?? rawPath;
+    final dotIndex = path.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex == path.length - 1) {
+      return null;
+    }
+    final extension = path.substring(dotIndex + 1).toLowerCase();
+    return RegExp(r'^[a-z0-9]{2,5}$').hasMatch(extension) ? extension : null;
+  }
+
   Widget _buildSummaryCard(BuildContext context) {
-    final selectedCount = _captures.where((capture) => capture.isAiSelected).length;
+    final selectedCount = _captures
+        .where((capture) => capture.isAiSelected)
+        .length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
       child: Card(
@@ -220,10 +285,7 @@ class _HistoryPageState extends State<HistoryPage>
                 ),
               ),
               Expanded(
-                child: _HistoryMetric(
-                  label: 'AI 已选',
-                  value: '$selectedCount',
-                ),
+                child: _HistoryMetric(label: 'AI 已选', value: '$selectedCount'),
               ),
             ],
           ),
@@ -377,8 +439,15 @@ class _HistoryPageState extends State<HistoryPage>
                             ),
                             const SizedBox(height: 12),
                             ..._captures.map(
-                              (capture) =>
-                                  _HistoryCaptureCard(capture: capture),
+                              (capture) => _HistoryCaptureCard(
+                                capture: capture,
+                                isSaving: _savingCaptureIds.contains(
+                                  capture.id,
+                                ),
+                                isSaved: _savedCaptureIds.contains(capture.id),
+                                onSaveToGallery: () =>
+                                    _saveCaptureToGallery(capture),
+                              ),
                             ),
                           ],
                         ),
@@ -471,14 +540,24 @@ class _HistorySessionCard extends StatelessWidget {
 }
 
 class _HistoryCaptureCard extends StatelessWidget {
-  const _HistoryCaptureCard({required this.capture});
+  const _HistoryCaptureCard({
+    required this.capture,
+    required this.isSaving,
+    required this.isSaved,
+    required this.onSaveToGallery,
+  });
 
   final CaptureRecord capture;
+  final bool isSaving;
+  final bool isSaved;
+  final VoidCallback onSaveToGallery;
 
   @override
   Widget build(BuildContext context) {
     final formatter = DateFormat('yyyy-MM-dd HH:mm');
-    final previewSource = LocalImageResolver.resolveCaptureRecordSource(capture);
+    final previewSource = LocalImageResolver.resolveCaptureRecordSource(
+      capture,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -504,7 +583,9 @@ class _HistoryCaptureCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text('所属会话：#${capture.sessionId} · ${_captureTypeLabel(capture.captureType)}'),
+              Text(
+                '所属会话：#${capture.sessionId} · ${_captureTypeLabel(capture.captureType)}',
+              ),
               const SizedBox(height: 6),
               Text('来源：${_storageLabel(capture.storageProvider)}'),
               if (capture.width != null && capture.height != null) ...<Widget>[
@@ -513,13 +594,31 @@ class _HistoryCaptureCard extends StatelessWidget {
               ],
               if (capture.score != null) ...<Widget>[
                 const SizedBox(height: 6),
-                Text('评分：${capture.score}'),
+                Text('评分：${ScoreFormatter.formatHundred(capture.score)}'),
               ],
               const SizedBox(height: 6),
               Text('时间：${formatter.format(capture.createdAt.toLocal())}'),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: isSaving || isSaved ? null : onSaveToGallery,
+                icon: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        isSaved
+                            ? Icons.check_circle_outline
+                            : Icons.download_outlined,
+                      ),
+                label: Text(isSaved ? '已保存到相册' : '保存到手机相册'),
+              ),
               const SizedBox(height: 8),
               Theme(
-                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                data: Theme.of(
+                  context,
+                ).copyWith(dividerColor: Colors.transparent),
                 child: ExpansionTile(
                   tilePadding: EdgeInsets.zero,
                   childrenPadding: EdgeInsets.zero,
@@ -535,6 +634,10 @@ class _HistoryCaptureCard extends StatelessWidget {
                             Text('存储标识：${capture.storageProvider}'),
                             const SizedBox(height: 6),
                             Text('文件地址：${capture.fileUrl}'),
+                            if (capture.latestAiTask != null) ...<Widget>[
+                              const SizedBox(height: 12),
+                              _AiReviewBlock(capture: capture),
+                            ],
                           ],
                         ),
                       ),
@@ -573,6 +676,91 @@ class _HistoryCaptureCard extends StatelessWidget {
       default:
         return raw;
     }
+  }
+}
+
+class _AiReviewBlock extends StatelessWidget {
+  const _AiReviewBlock({required this.capture});
+
+  final CaptureRecord capture;
+
+  @override
+  Widget build(BuildContext context) {
+    final task = capture.latestAiTask;
+    if (task == null) {
+      return const SizedBox.shrink();
+    }
+    final scoreLabel = ScoreFormatter.formatHundred(task.resultScore);
+    final summary = task.resultSummary?.trim();
+    final error = task.errorMessage?.trim();
+    final suggestions = _readSuggestions(task.responsePayload);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0x0F0D5C63),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.auto_awesome_outlined,
+                  size: 18,
+                  color: Color(0xFF0D5C63),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'AI 评价',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (scoreLabel != null) _StatusBadge(label: '评分 $scoreLabel'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (summary != null && summary.isNotEmpty)
+              Text(summary, style: const TextStyle(height: 1.45))
+            else if (error != null && error.isNotEmpty)
+              Text(
+                error,
+                style: const TextStyle(
+                  height: 1.45,
+                  color: Color(0xFF9E2A2B),
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else
+              const Text('AI 暂无文字评价。', style: TextStyle(height: 1.45)),
+            if (suggestions.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 10),
+              for (final suggestion in suggestions)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('• $suggestion'),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<String> _readSuggestions(Map<String, dynamic> payload) {
+    final raw = payload['suggestions'];
+    if (raw is! List) {
+      return const <String>[];
+    }
+    return raw
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
   }
 }
 
@@ -648,10 +836,7 @@ class _HistoryCaptureThumbnail extends StatelessWidget {
     return Container(
       color: const Color(0xFFF1ECE2),
       child: const Center(
-        child: Icon(
-          Icons.broken_image_outlined,
-          color: Color(0xFF6A6258),
-        ),
+        child: Icon(Icons.broken_image_outlined, color: Color(0xFF6A6258)),
       ),
     );
   }

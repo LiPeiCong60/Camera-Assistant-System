@@ -16,7 +16,6 @@ const navGroups = [
       { label: "用户管理", routeName: "users" },
       { label: "套餐管理", routeName: "plans" },
       { label: "推荐模板", routeName: "templates" },
-      { label: "设备列表", routeName: "devices" },
     ],
   },
   {
@@ -39,7 +38,7 @@ function navigate(routeName) {
 <template>
   <aside class="sidebar glass-card">
     <div class="brand-block">
-      <p class="brand-kicker">Camera Assistant</p>
+      <p class="brand-kicker">云影随行</p>
       <h1>管理后台</h1>
     </div>
 

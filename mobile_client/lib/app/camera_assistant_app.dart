@@ -94,7 +94,7 @@ class _CameraAssistantAppState extends State<CameraAssistantApp> {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Camera Assistant',
+      title: '云影随行',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,

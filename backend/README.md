@@ -1,6 +1,6 @@
 # backend
 
-Camera Assistant 业务后端，基于 FastAPI + SQLAlchemy + PostgreSQL。它处理账号、套餐、订阅、设备登记、模板、拍摄会话、抓拍记录、AI 任务、上传文件和管理后台接口。
+???? 业务后端，基于 FastAPI + SQLAlchemy + PostgreSQL。它处理账号、套餐、订阅、设备登记、模板、拍摄会话、抓拍记录、AI 任务、上传文件和管理后台接口。
 
 ## 职责边界
 

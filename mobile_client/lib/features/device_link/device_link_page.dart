@@ -24,6 +24,7 @@ import '../../services/app_config.dart';
 import '../../services/device_api_service.dart';
 import '../../services/device_webrtc_service.dart';
 import '../../services/mobile_api_service.dart';
+import '../../utils/score_formatter.dart';
 import '../template/template_photo_dialog.dart';
 
 class DeviceLinkPage extends StatefulWidget {
@@ -110,6 +111,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   String? _syncMessage;
   String? _diagnosticMessage;
   String? _lastCapturePath;
+  String? _lastAiResultTitle;
+  String? _lastAiResultBody;
+  String? _preferredAiResultKind;
+  DateTime? _lastAiResultAt;
   AiTaskSummary? _lastBackendAiTask;
   DateTime? _lastStatusUpdatedAt;
   Timer? _pollTimer;
@@ -139,6 +144,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   bool _isStartingMobilePush = false;
   bool _isPushingMobileFrame = false;
   bool _isSavingDeviceCapture = false;
+  bool _isHudAiResultExpanded = false;
+  bool _isHudCapturesExpanded = false;
   bool _isHandlingMobilePushOrientationChange = false;
   bool _mobilePushConfigSent = false;
   int _mobilePushFrameCount = 0;
@@ -912,6 +919,12 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _latestPreviewFrameAt = null;
         _previewStreamErrorMessage = null;
         _lastCapturePath = null;
+        _lastAiResultTitle = null;
+        _lastAiResultBody = null;
+        _preferredAiResultKind = null;
+        _lastAiResultAt = null;
+        _isHudAiResultExpanded = false;
+        _isHudCapturesExpanded = false;
         _lastBackendAiTask = null;
         _lastStatusUpdatedAt = null;
         _sessionCodeController.text = _buildSessionCode();
@@ -1979,6 +1992,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     await _runAction(() async {
+      setState(() {
+        _setLastAiResult(
+          title: 'AI 对话框',
+          body: 'AI 正在扫描不同角度，完成后会在这里显示最佳照片和原因。',
+          kind: 'angle',
+        );
+      });
       await _deviceApiService.startAngleSearch(
         baseUrl: _baseUrlController.text,
         panRange: config.panRange,
@@ -2007,6 +2027,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     await _runAction(() async {
+      setState(() {
+        _setLastAiResult(
+          title: 'AI 对话框',
+          body: 'AI 正在扫描背景机位，完成后会在这里显示推荐原因和拍摄建议。',
+          kind: 'background',
+        );
+      });
       await _deviceApiService.startBackgroundLock(
         baseUrl: _baseUrlController.text,
         panRange: config.panRange,
@@ -2053,6 +2080,22 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           captureResult.path,
           source: 'device_runtime',
         );
+        if (captureResult.analysis != null) {
+          _setLastAiResult(
+            title: 'AI 对话框',
+            body: _formatCaptureAnalysisMap(
+              captureResult.analysis!,
+              capturePath: captureResult.path,
+            ),
+            kind: 'capture',
+          );
+        } else if (captureResult.analysisError != null) {
+          _setLastAiResult(
+            title: 'AI 对话框',
+            body: captureResult.analysisError!,
+            kind: 'capture',
+          );
+        }
         if (captureResult.analysisError != null) {
           _errorMessage = captureResult.analysisError;
         }
@@ -2185,6 +2228,225 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final sorted = List<CaptureRecord>.from(captures)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return sorted.first;
+  }
+
+  void _setLastAiResult({
+    required String title,
+    required String body,
+    String? kind,
+    bool expand = true,
+  }) {
+    final normalizedBody = body.trim();
+    if (normalizedBody.isEmpty) {
+      return;
+    }
+    _lastAiResultTitle = title;
+    _lastAiResultBody = normalizedBody;
+    _preferredAiResultKind = kind;
+    _lastAiResultAt = DateTime.now();
+    _isHudAiResultExpanded = expand;
+  }
+
+  _AiResultText? _latestAiResultText() {
+    final aiStatus = _status?.aiStatus ?? const DeviceAiStatusSummary();
+    final backgroundResult = aiStatus.lastBackgroundLockResult;
+    final angleResult = aiStatus.lastAngleSearchResult;
+    final latestCapture = _status?.latestCapture;
+
+    if (_preferredAiResultKind == 'capture') {
+      final captureResult = _latestCaptureAiResult(latestCapture);
+      if (captureResult != null) {
+        return captureResult;
+      }
+    }
+
+    if (_preferredAiResultKind == 'angle' && angleResult != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: _formatAngleSearchResult(angleResult),
+      );
+    }
+
+    if (_preferredAiResultKind == 'background' && backgroundResult != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: _formatBackgroundLockResult(backgroundResult),
+      );
+    }
+
+    if (_lastAiResultTitle != null && _lastAiResultBody != null) {
+      final timeLabel = _lastAiResultAt == null
+          ? null
+          : '更新时间：${_formatClock(_lastAiResultAt!)}';
+      return _AiResultText(
+        title: _lastAiResultTitle!,
+        body: [_lastAiResultBody!, ?timeLabel].join('\n'),
+      );
+    }
+
+    if (backgroundResult != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: _formatBackgroundLockResult(backgroundResult),
+      );
+    }
+
+    if (angleResult != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: _formatAngleSearchResult(angleResult),
+      );
+    }
+
+    final captureResult = _latestCaptureAiResult(latestCapture);
+    if (captureResult != null) {
+      return captureResult;
+    }
+
+    return null;
+  }
+
+  _AiResultText? _latestCaptureAiResult(
+    DeviceLatestCaptureSummary? latestCapture,
+  ) {
+    if (latestCapture?.analysisError != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: latestCapture!.analysisError!,
+      );
+    }
+    if (latestCapture?.analysis != null) {
+      return _AiResultText(
+        title: 'AI 对话框',
+        body: _formatCaptureAnalysis(
+          latestCapture!.analysis!,
+          capturePath: latestCapture.path,
+        ),
+      );
+    }
+    return null;
+  }
+
+  String _formatAngleSearchResult(Map<String, dynamic> result) {
+    final lines = <String>[];
+    _addResultLine(lines, 'AI 判断', _resultValue(result, 'summary'));
+    _addResultLine(lines, '最佳照片', _resultValue(result, 'capture_path'));
+    _addResultLine(
+      lines,
+      '评分',
+      _formatScore(_resultValue(result, 'best_score')),
+    );
+    _addResultLine(lines, '扫描数量', _resultValue(result, 'num_scanned'));
+    _addResultLine(lines, '云台角度', _formatPanTilt(result));
+    _addSuggestions(lines, _resultValue(result, 'suggestions'));
+    return lines.isEmpty ? 'AI 已返回自动找角度结果。' : lines.join('\n');
+  }
+
+  String _formatBackgroundLockResult(Map<String, dynamic> result) {
+    final nested = _resultValue(result, 'result');
+    final resultMap = nested is Map
+        ? Map<String, dynamic>.from(nested)
+        : <String, dynamic>{};
+    final source = resultMap.isEmpty ? result : resultMap;
+    final lines = <String>[];
+    _addResultLine(lines, 'AI 判断', _resultValue(source, 'summary'));
+    _addResultLine(lines, '站位建议', _resultValue(source, 'placement'));
+    _addResultLine(lines, '拍摄角度', _resultValue(source, 'camera_angle'));
+    _addResultLine(lines, '光线判断', _resultValue(source, 'lighting'));
+    _addResultLine(lines, '评分', _formatScore(_resultValue(source, 'score')));
+    _addResultLine(lines, '扫描数量', _resultValue(result, 'num_scanned'));
+    _addResultLine(lines, '锁定角度', _formatPanTilt(result));
+    _addSuggestions(lines, _resultValue(source, 'suggestions'));
+    return lines.isEmpty ? 'AI 已返回背景锁定结果。' : lines.join('\n');
+  }
+
+  String _formatCaptureAnalysis(
+    DeviceCaptureAnalysisSummary analysis, {
+    String? capturePath,
+  }) {
+    final lines = <String>[];
+    _addResultLine(lines, 'AI 判断', analysis.summary);
+    _addResultLine(lines, '抓拍照片', capturePath);
+    _addResultLine(lines, '评分', _formatScore(analysis.score));
+    _addSuggestions(lines, analysis.suggestions);
+    return lines.isEmpty ? '抓拍 AI 分析已完成。' : lines.join('\n');
+  }
+
+  String _formatCaptureAnalysisMap(
+    Map<String, dynamic> analysis, {
+    String? capturePath,
+  }) {
+    final lines = <String>[];
+    _addResultLine(lines, 'AI 判断', _resultValue(analysis, 'summary'));
+    _addResultLine(lines, '抓拍照片', capturePath);
+    _addResultLine(lines, '评分', _formatScore(_resultValue(analysis, 'score')));
+    _addSuggestions(lines, _resultValue(analysis, 'suggestions'));
+    return lines.isEmpty ? '抓拍 AI 分析已完成。' : lines.join('\n');
+  }
+
+  dynamic _resultValue(Map<String, dynamic> result, String key) {
+    return result[key] ??
+        result[_toSnakeCase(key)] ??
+        result[_toCamelCase(key)];
+  }
+
+  String? _formatScore(dynamic value) {
+    if (value is num) {
+      return ScoreFormatter.formatHundred(value);
+    }
+    final parsed = num.tryParse(value?.toString() ?? '');
+    return ScoreFormatter.formatHundred(parsed);
+  }
+
+  String? _formatPanTilt(Map<String, dynamic> result) {
+    final pan =
+        _resultValue(result, 'best_pan') ?? _resultValue(result, 'current_pan');
+    final tilt =
+        _resultValue(result, 'best_tilt') ??
+        _resultValue(result, 'current_tilt');
+    if (pan == null && tilt == null) {
+      return null;
+    }
+    return 'pan ${pan ?? '-'} / tilt ${tilt ?? '-'}';
+  }
+
+  void _addResultLine(List<String> lines, String label, dynamic value) {
+    if (value == null) {
+      return;
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty) {
+      return;
+    }
+    lines.add('$label：$text');
+  }
+
+  void _addSuggestions(List<String> lines, dynamic suggestions) {
+    if (suggestions is! Iterable) {
+      return;
+    }
+    final values = suggestions
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (values.isEmpty) {
+      return;
+    }
+    lines.add('建议：${values.join('；')}');
+  }
+
+  String _toSnakeCase(String value) {
+    return value.replaceAllMapped(
+      RegExp(r'[A-Z]'),
+      (match) => '_${match.group(0)!.toLowerCase()}',
+    );
+  }
+
+  String _toCamelCase(String value) {
+    return value.replaceAllMapped(
+      RegExp(r'_([a-z])'),
+      (match) => match.group(1)!.toUpperCase(),
+    );
   }
 
   void _rememberDeviceCapturePath(String? path, {required String source}) {
@@ -3286,7 +3548,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Widget _buildAiActionSummary(BuildContext context) {
     if (_lastCapturePath == null && _lastBackendAiTask == null) {
       return Text(
-        '当前还没有 AI 执行记录，可直接触发抓拍或应用后端结果。',
+        '当前还没有 AI 执行记录，可直接触发抓拍、自动找角度或背景锁定。',
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: const Color(0xFF6A6258),
           height: 1.4,
@@ -3387,16 +3649,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
               onPressed: _isBusy ? null : _triggerCapture,
               icon: const Icon(Icons.camera_outlined),
               label: const Text('触发抓拍'),
-            ),
-            FilledButton.tonalIcon(
-              onPressed: _isBusy ? null : _applyLatestBackendAiLock,
-              icon: const Icon(Icons.cloud_sync_outlined),
-              label: const Text('应用后端 AI 锁机位'),
-            ),
-            FilledButton.tonalIcon(
-              onPressed: _isBusy ? null : _applyLatestBackendAiAngle,
-              icon: const Icon(Icons.tune_outlined),
-              label: const Text('应用后端 AI 角度'),
             ),
           ],
           footer: _buildAiActionSummary(context),
@@ -4077,7 +4329,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     return Positioned(
       left: 16,
       right: 16,
-      bottom: bottomPadding + 76,
+      bottom: bottomPadding + 96,
       child: Align(
         alignment: Alignment.bottomCenter,
         child: ConstrainedBox(
@@ -4241,7 +4493,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         if (templateStatus?.composeScore != null) ...<Widget>[
           const SizedBox(height: 4),
           Text(
-            '构图分数${templateStatus!.composeScore!.toStringAsFixed(1)}',
+            '构图分数${ScoreFormatter.formatHundred(templateStatus!.composeScore) ?? '-'}',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.68)),
           ),
         ],
@@ -4345,8 +4597,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final isRunning = aiStatus.hasRunningTask;
     final lastError =
         aiStatus.lastAngleSearchError ?? aiStatus.lastBackgroundLockError;
-    final lastResult =
-        aiStatus.lastAngleSearchResult ?? aiStatus.lastBackgroundLockResult;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -4382,38 +4632,17 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                   ? null
                   : _unlockBackgroundLock,
             ),
-            _HudActionChip(
-              icon: Icons.cloud_sync_outlined,
-              label: '外部锁定',
-              onTap: _isBusy ? null : _applyLatestBackendAiLock,
-            ),
-            _HudActionChip(
-              icon: Icons.tune_outlined,
-              label: '外部角度',
-              onTap: _isBusy ? null : _applyLatestBackendAiAngle,
-            ),
           ],
         ),
         const SizedBox(height: 12),
         _buildHudGestureOptions(context),
+        _buildHudAiResultButton(context),
         if (isRunning) ...<Widget>[
           const SizedBox(height: 12),
           LinearProgressIndicator(
             minHeight: 3,
             color: const Color(0xFF9BE7DD),
             backgroundColor: Colors.white.withValues(alpha: 0.12),
-          ),
-        ],
-        if (lastResult != null) ...<Widget>[
-          const SizedBox(height: 10),
-          Text(
-            "最近结果：${lastResult['summary'] ?? lastResult['best_summary'] ?? lastResult}",
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
-              height: 1.35,
-            ),
           ),
         ],
         if (lastError != null) ...<Widget>[
@@ -4433,14 +4662,98 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
   }
 
+  Widget _buildHudAiResultButton(BuildContext context) {
+    final result = _latestAiResultText();
+    if (result == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(22),
+                onTap: () {
+                  setState(() {
+                    _isHudAiResultExpanded = !_isHudAiResultExpanded;
+                  });
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      const Icon(
+                        Icons.article_outlined,
+                        color: Color(0xFF9BE7DD),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          result.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        _isHudAiResultExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        color: Colors.white.withValues(alpha: 0.72),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            AnimatedCrossFade(
+              firstChild: const SizedBox.shrink(),
+              secondChild: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Text(
+                  result.body,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.76),
+                    height: 1.45,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              crossFadeState: _isHudAiResultExpanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 180),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildHudGestureOptions(BuildContext context) {
     final gesture =
         _status?.gestureStatus ?? const DeviceGestureStatusSummary();
     final latestCapture =
         _status?.latestCapture ?? const DeviceLatestCaptureSummary();
     final canUpdate = _status?.sessionOpened == true && !_isBusy;
-    final analysisSummary = latestCapture.analysis?.summary;
-    final analysisScore = latestCapture.analysis?.score;
     final recentCaptures = _captureRecords.take(4).toList(growable: false);
 
     Widget option({
@@ -4521,107 +4834,190 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             ),
           ),
         ],
-        if (analysisSummary != null ||
-            latestCapture.analysisError != null) ...<Widget>[
-          const SizedBox(height: 8),
-          Text(
-            latestCapture.analysisError ??
-                '抓拍 AI：${analysisScore == null ? '' : '${analysisScore.toStringAsFixed(1)} 分 · '}$analysisSummary',
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: latestCapture.analysisError == null
-                  ? Colors.white.withValues(alpha: 0.72)
-                  : const Color(0xFFFFB7A8),
-              fontWeight: FontWeight.w700,
-              height: 1.35,
-            ),
-          ),
-        ],
         if (recentCaptures.isNotEmpty) ...<Widget>[
           const SizedBox(height: 10),
-          Text(
-            '设备照片',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.78),
-              fontWeight: FontWeight.w800,
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
             ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              for (var index = 0; index < recentCaptures.length; index++)
-                SizedBox(
-                  width: 118,
-                  child: _HudGlass(
-                    compact: true,
-                    tint: const Color(0x6610181C),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Image.network(
-                              _deviceCaptureFileUrl(recentCaptures[index].path),
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return Container(
-                                  color: Colors.white.withValues(alpha: 0.08),
-                                  alignment: Alignment.center,
-                                  child: Icon(
-                                    Icons.image_not_supported_outlined,
-                                    color: Colors.white.withValues(alpha: 0.52),
-                                  ),
-                                );
-                              },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(22),
+                    onTap: () {
+                      setState(() {
+                        _isHudCapturesExpanded = !_isHudCapturesExpanded;
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      child: Row(
+                        children: <Widget>[
+                          const Icon(
+                            Icons.photo_library_outlined,
+                            color: Color(0xFF9BE7DD),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '设备照片',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
+                          Text(
+                            '${recentCaptures.length}',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.62),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Icon(
+                            _isHudCapturesExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            color: Colors.white.withValues(alpha: 0.72),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                AnimatedCrossFade(
+                  firstChild: const SizedBox.shrink(),
+                  secondChild: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: <Widget>[
+                            for (
+                              var index = 0;
+                              index < recentCaptures.length;
+                              index++
+                            )
+                              SizedBox(
+                                width: 118,
+                                child: _HudGlass(
+                                  compact: true,
+                                  tint: const Color(0x6610181C),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(10),
+                                        child: AspectRatio(
+                                          aspectRatio: 1,
+                                          child: Image.network(
+                                            _deviceCaptureFileUrl(
+                                              recentCaptures[index].path,
+                                            ),
+                                            fit: BoxFit.cover,
+                                            errorBuilder:
+                                                (context, error, stackTrace) {
+                                                  return Container(
+                                                    color: Colors.white
+                                                        .withValues(
+                                                          alpha: 0.08,
+                                                        ),
+                                                    alignment: Alignment.center,
+                                                    child: Icon(
+                                                      Icons
+                                                          .image_not_supported_outlined,
+                                                      color: Colors.white
+                                                          .withValues(
+                                                            alpha: 0.52,
+                                                          ),
+                                                    ),
+                                                  );
+                                                },
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        _shortDeviceCaptureName(
+                                          recentCaptures[index].path,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.72,
+                                          ),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      _HudActionChip(
+                                        icon:
+                                            recentCaptures[index].localPath ==
+                                                null
+                                            ? Icons.download_outlined
+                                            : Icons.check_circle_outline,
+                                        label:
+                                            recentCaptures[index].localPath ==
+                                                null
+                                            ? '保存'
+                                            : '已保存',
+                                        selected:
+                                            recentCaptures[index].localPath !=
+                                            null,
+                                        onTap:
+                                            _isSavingDeviceCapture ||
+                                                recentCaptures[index]
+                                                        .localPath !=
+                                                    null
+                                            ? null
+                                            : () => _saveDeviceCaptureToPhone(
+                                                recentCaptures[index],
+                                              ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          _shortDeviceCaptureName(recentCaptures[index].path),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          '树莓派照片会先列在这里，点保存后才写入手机本地。',
                           style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.72),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
+                            color: Colors.white.withValues(alpha: 0.58),
+                            height: 1.35,
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        _HudActionChip(
-                          icon: recentCaptures[index].localPath == null
-                              ? Icons.download_outlined
-                              : Icons.check_circle_outline,
-                          label: recentCaptures[index].localPath == null
-                              ? '保存'
-                              : '已保存',
-                          selected: recentCaptures[index].localPath != null,
-                          onTap:
-                              _isSavingDeviceCapture ||
-                                  recentCaptures[index].localPath != null
-                              ? null
-                              : () => _saveDeviceCaptureToPhone(
-                                  recentCaptures[index],
-                                ),
                         ),
                       ],
                     ),
                   ),
+                  crossFadeState: _isHudCapturesExpanded
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 180),
                 ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '树莓派照片会先列在这里，点保存后才写入手机本地。',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.58),
-              height: 1.35,
+              ],
             ),
           ),
         ],
@@ -5992,6 +6388,13 @@ class _DeviceActionRecord {
   final String category;
   final String message;
   final DateTime createdAt;
+}
+
+class _AiResultText {
+  const _AiResultText({required this.title, required this.body});
+
+  final String title;
+  final String body;
 }
 
 class _DeviceCaptureRecord {

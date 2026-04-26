@@ -8,6 +8,7 @@ import numpy as np
 from device_runtime.api.app import app
 from device_runtime.api.routes.status import DeviceRuntimeConfigRequest
 from device_runtime.api.session_manager import DeviceSessionContext
+from device_runtime.config import RaspberryPiProfile, apply_rpi_profile, default_config
 from device_runtime.services.runtime_state import RuntimeState
 from device_runtime.templates.template_compose import GestureCaptureState, TemplateProfile
 from device_runtime.utils.common_types import BBox, DetectionResult, LineSegment, Point, VisionResult
@@ -153,13 +154,54 @@ class OverlayGestureTest(unittest.TestCase):
 
     def test_config_route_model_exists(self) -> None:
         payload = DeviceRuntimeConfigRequest(
-            overlay={"enabled": True, "show_live_hands": False},
+            overlay={
+                "enabled": True,
+                "show_face_mesh": False,
+                "show_hands": False,
+                "show_tracking_anchor": True,
+            },
             gesture={"capture_enabled": True},
         )
         self.assertTrue(payload.overlay.enabled)
-        self.assertFalse(payload.overlay.show_live_hands)
+        self.assertFalse(payload.overlay.show_face_mesh)
+        self.assertFalse(payload.overlay.show_hands)
+        self.assertTrue(payload.overlay.show_tracking_anchor)
         self.assertTrue(payload.gesture.capture_enabled)
         self.assertIn("/api/device/config", {route.path for route in app.routes})
+
+    def test_overlay_settings_accept_compat_aliases(self) -> None:
+        settings = OverlaySettings()
+        settings.update_from_dict(
+            {
+                "show_body_skeleton": False,
+                "show_face_mesh": False,
+                "show_hands": False,
+                "show_tracking_anchor": True,
+            }
+        )
+
+        self.assertFalse(settings.show_live_body_skeleton)
+        self.assertFalse(settings.show_live_face_mesh)
+        self.assertFalse(settings.show_live_hands)
+        self.assertTrue(settings.show_tracking_anchor)
+
+    def test_performance_profile_keeps_tracking_anchor_lightweight(self) -> None:
+        cfg = default_config("mobile_push")
+        apply_rpi_profile(cfg, RaspberryPiProfile.performance())
+
+        self.assertEqual(cfg.detection.detector_fps, 6.0)
+        self.assertEqual(cfg.detection.async_skip_frames, 1)
+        self.assertEqual(cfg.detection.max_inference_side, 480)
+        self.assertFalse(cfg.detection.enable_pose_landmarks)
+        self.assertFalse(cfg.detection.enable_face_landmarks)
+        self.assertFalse(cfg.detection.enable_hand_landmarks)
+        self.assertEqual(cfg.detection.tracking_anchor_mode, "upper_body")
+        self.assertEqual(cfg.app.ui_refresh_fps, 15.0)
+        self.assertEqual(cfg.app.preview_scale, 0.5)
+        self.assertFalse(cfg.app.show_body_skeleton)
+        self.assertFalse(cfg.app.show_face_mesh)
+        self.assertFalse(cfg.app.show_hands)
+        self.assertTrue(cfg.app.show_tracking_anchor)
 
 
 if __name__ == "__main__":

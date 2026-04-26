@@ -25,7 +25,21 @@ class HomePage extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Camera Assistant'),
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset(
+                    'assets/branding/app_logo.png',
+                    width: 28,
+                    height: 28,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text('云影随行'),
+              ],
+            ),
             actions: <Widget>[
               IconButton(
                 tooltip: '刷新基础数据',

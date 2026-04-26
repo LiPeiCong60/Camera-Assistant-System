@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 @dataclass(frozen=True)
 class Settings:
-    app_name: str = "Camera Assistant Backend"
+    app_name: str = "云影随行 Backend"
     environment: str = "development"
     version: str = "0.1.0"
     host: str = "0.0.0.0"
@@ -39,7 +39,7 @@ def _resolve_auth_secret(environment: str) -> str:
 def get_settings() -> Settings:
     environment = os.getenv("BACKEND_ENV", "development")
     return Settings(
-        app_name=os.getenv("BACKEND_APP_NAME", "Camera Assistant Backend"),
+        app_name=os.getenv("BACKEND_APP_NAME", "云影随行 Backend"),
         environment=environment,
         version=os.getenv("BACKEND_VERSION", "0.1.0"),
         host=os.getenv("BACKEND_HOST", "0.0.0.0"),

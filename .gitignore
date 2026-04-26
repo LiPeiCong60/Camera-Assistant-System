@@ -47,6 +47,9 @@ demo/
 
 # Local/private generated deliverables
 deliverables/
+logo.png
+mobile_client/assets/branding/app_icon_source.png
+mobile_client/assets/branding/app_icon_preview.png
 
 # Local env / secrets
 .env

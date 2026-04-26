@@ -1,6 +1,6 @@
 # mobile_client
 
-Camera Assistant Flutter 手机端，负责登录、拍摄、模板、历史和设备联动。设备联动主视频链路已改为 WebRTC：手机通过 `flutter_webrtc` 把摄像头 video track 推给 `device_runtime`，并显示设备端返回的处理后预览 video track。
+???? Flutter 手机端，负责登录、拍摄、模板、历史和设备联动。设备联动主视频链路已改为 WebRTC：手机通过 `flutter_webrtc` 把摄像头 video track 推给 `device_runtime`，并显示设备端返回的处理后预览 video track。
 
 ## 职责
 

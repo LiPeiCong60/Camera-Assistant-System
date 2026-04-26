@@ -50,12 +50,14 @@ class AiTaskSummary {
       targetBoxNorm: _readTargetBoxNorm(
         json['target_box_norm'] ?? responsePayload['target_box_norm'],
       ),
-      recommendedPanDelta: (_readNum(json['recommended_pan_delta']) ??
-              _readNum(responsePayload['recommended_pan_delta']))
-          ?.toDouble(),
-      recommendedTiltDelta: (_readNum(json['recommended_tilt_delta']) ??
-              _readNum(responsePayload['recommended_tilt_delta']))
-          ?.toDouble(),
+      recommendedPanDelta:
+          (_readNum(json['recommended_pan_delta']) ??
+                  _readNum(responsePayload['recommended_pan_delta']))
+              ?.toDouble(),
+      recommendedTiltDelta:
+          (_readNum(json['recommended_tilt_delta']) ??
+                  _readNum(responsePayload['recommended_tilt_delta']))
+              ?.toDouble(),
       errorMessage: json['error_message'] as String?,
       providerMetadata:
           responsePayload['provider_metadata'] as Map<String, dynamic>? ??
@@ -64,6 +66,24 @@ class AiTaskSummary {
         json['created_at'] as String? ?? DateTime.now().toIso8601String(),
       ),
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'task_code': taskCode,
+      'task_type': taskType,
+      'status': status,
+      'request_payload': requestPayload,
+      'response_payload': responsePayload,
+      'result_summary': resultSummary,
+      'result_score': resultScore,
+      'target_box_norm': targetBoxNorm,
+      'recommended_pan_delta': recommendedPanDelta,
+      'recommended_tilt_delta': recommendedTiltDelta,
+      'error_message': errorMessage,
+      'created_at': createdAt.toIso8601String(),
+    };
   }
 
   static List<double>? _readTargetBoxNorm(dynamic value) {

@@ -1,6 +1,6 @@
 # database
 
-Camera Assistant PostgreSQL 数据库说明。
+???? PostgreSQL 数据库说明。
 
 ## 文件
 

@@ -1,1 +1,1 @@
-"""Camera Assistant device runtime package."""
+"""云影随行 device runtime package."""

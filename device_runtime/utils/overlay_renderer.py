@@ -25,7 +25,9 @@ class OverlaySettings:
     enabled: bool = True
     show_live_person_bbox: bool = True
     show_live_body_skeleton: bool = True
+    show_live_face_mesh: bool = True
     show_live_hands: bool = True
+    show_tracking_anchor: bool = False
     show_template_bbox: bool = True
     show_template_skeleton: bool = True
     show_ai_lock_box: bool = True
@@ -35,13 +37,21 @@ class OverlaySettings:
             "enabled": self.enabled,
             "show_live_person_bbox": self.show_live_person_bbox,
             "show_live_body_skeleton": self.show_live_body_skeleton,
+            "show_live_face_mesh": self.show_live_face_mesh,
             "show_live_hands": self.show_live_hands,
+            "show_tracking_anchor": self.show_tracking_anchor,
             "show_template_bbox": self.show_template_bbox,
             "show_template_skeleton": self.show_template_skeleton,
             "show_ai_lock_box": self.show_ai_lock_box,
         }
 
     def update_from_dict(self, values: dict[str, object]) -> None:
+        aliases = {
+            "show_face_mesh": "show_live_face_mesh",
+            "show_hands": "show_live_hands",
+            "show_body_skeleton": "show_live_body_skeleton",
+        }
+        values = {aliases.get(key, key): value for key, value in values.items()}
         for key in self.as_dict():
             if key in values and values[key] is not None:
                 setattr(self, key, bool(values[key]))
@@ -97,6 +107,16 @@ class DeviceOverlayRenderer:
                 for point in hand:
                     cv2.circle(frame, (int(point.x), int(point.y)), 2, (60, 240, 255), -1)
 
+        if settings.show_live_face_mesh:
+            for seg in vision.face_mesh or []:
+                cv2.line(
+                    frame,
+                    (int(seg.start.x), int(seg.start.y)),
+                    (int(seg.end.x), int(seg.end.y)),
+                    (255, 180, 90),
+                    1,
+                )
+
         if settings.show_live_person_bbox and vision.person_bbox is not None:
             bbox = vision.person_bbox
             cv2.rectangle(
@@ -113,6 +133,27 @@ class DeviceOverlayRenderer:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (0, 220, 0),
+                1,
+            )
+
+        if settings.show_tracking_anchor and vision.tracking_detection is not None:
+            anchor = (
+                vision.tracking_detection.anchor_point
+                or vision.tracking_detection.bbox.center
+            )
+            cv2.circle(frame, (int(anchor.x), int(anchor.y)), 7, (0, 255, 255), 2)
+            cv2.line(
+                frame,
+                (int(anchor.x) - 10, int(anchor.y)),
+                (int(anchor.x) + 10, int(anchor.y)),
+                (0, 255, 255),
+                1,
+            )
+            cv2.line(
+                frame,
+                (int(anchor.x), int(anchor.y) - 10),
+                (int(anchor.x), int(anchor.y) + 10),
+                (0, 255, 255),
                 1,
             )
 
