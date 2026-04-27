@@ -30,6 +30,8 @@ class _HistoryPageState extends State<HistoryPage>
   List<CaptureRecord> _captures = const <CaptureRecord>[];
   final Set<int> _savingCaptureIds = <int>{};
   final Set<int> _savedCaptureIds = <int>{};
+  final Set<int> _analyzingCaptureIds = <int>{};
+  final Set<int> _selectedBatchPickCaptureIds = <int>{};
   final GallerySaveService _gallerySaveService = const GallerySaveService();
   bool _isLoading = true;
   bool _isBatchPicking = false;
@@ -69,6 +71,7 @@ class _HistoryPageState extends State<HistoryPage>
       setState(() {
         _sessions = results[0] as List<CaptureSessionSummary>;
         _captures = results[1] as List<CaptureRecord>;
+        _syncBatchPickSelectionWithCaptures();
         _isLoading = false;
       });
     } on ApiException catch (error) {
@@ -81,6 +84,7 @@ class _HistoryPageState extends State<HistoryPage>
         setState(() {
           _sessions = cachedSessions;
           _captures = cachedCaptures;
+          _syncBatchPickSelectionWithCaptures();
           _noticeMessage = '当前网络不可用，已展示本地缓存历史记录。';
           _isLoading = false;
         });
@@ -100,6 +104,7 @@ class _HistoryPageState extends State<HistoryPage>
         setState(() {
           _sessions = cachedSessions;
           _captures = cachedCaptures;
+          _syncBatchPickSelectionWithCaptures();
           _noticeMessage = '历史接口暂时不可用，当前显示本地缓存。';
           _isLoading = false;
         });
@@ -112,11 +117,50 @@ class _HistoryPageState extends State<HistoryPage>
     }
   }
 
-  Future<void> _runBatchPickForLatestGroup() async {
-    final targetGroup = _findLatestBatchPickGroup();
-    if (targetGroup == null) {
+  void _syncBatchPickSelectionWithCaptures() {
+    final availableIds = _captures.map((capture) => capture.id).toSet();
+    _selectedBatchPickCaptureIds.removeWhere(
+      (captureId) => !availableIds.contains(captureId),
+    );
+  }
+
+  List<CaptureRecord> _selectedBatchPickCaptures() {
+    final selected = _captures
+        .where((capture) => _selectedBatchPickCaptureIds.contains(capture.id))
+        .toList(growable: false);
+    selected.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return selected;
+  }
+
+  void _toggleBatchPickCapture(CaptureRecord capture) {
+    setState(() {
+      _errorMessage = null;
+      _noticeMessage = null;
+      if (_selectedBatchPickCaptureIds.contains(capture.id)) {
+        _selectedBatchPickCaptureIds.remove(capture.id);
+        return;
+      }
+      if (_selectedBatchPickCaptureIds.length >= 9) {
+        _errorMessage = 'AI 优选最多选择 9 张照片。';
+        return;
+      }
+      _selectedBatchPickCaptureIds.add(capture.id);
+    });
+  }
+
+  void _clearBatchPickSelection() {
+    setState(() {
+      _selectedBatchPickCaptureIds.clear();
+      _errorMessage = null;
+      _noticeMessage = null;
+    });
+  }
+
+  Future<void> _runBatchPickForSelectedCaptures() async {
+    final selectedCaptures = _selectedBatchPickCaptures();
+    if (selectedCaptures.length < 2 || selectedCaptures.length > 9) {
       setState(() {
-        _errorMessage = '当前没有可用于 AI 选优的一组抓拍，至少需要同一会话下两张图片。';
+        _errorMessage = '请选择 2 到 9 张照片后再执行 AI 优选。';
       });
       return;
     }
@@ -130,8 +174,8 @@ class _HistoryPageState extends State<HistoryPage>
     try {
       final result = await widget.apiService.batchPick(
         accessToken: widget.accessToken,
-        sessionId: targetGroup.sessionId,
-        captureIds: targetGroup.captureIds,
+        sessionId: selectedCaptures.first.sessionId,
+        captureIds: selectedCaptures.map((capture) => capture.id).toList(),
       );
       if (!mounted) {
         return;
@@ -152,8 +196,9 @@ class _HistoryPageState extends State<HistoryPage>
       }
 
       setState(() {
+        _selectedBatchPickCaptureIds.clear();
         _noticeMessage =
-            'AI 选优完成，会话 #${targetGroup.sessionId} 的最佳图片为 #${result.bestCaptureId ?? '-'}。';
+            'AI 优选完成，已从 ${selectedCaptures.length} 张照片中选出 #${result.bestCaptureId ?? '-'}。';
         _isBatchPicking = false;
       });
     } on ApiException catch (error) {
@@ -173,34 +218,6 @@ class _HistoryPageState extends State<HistoryPage>
         _isBatchPicking = false;
       });
     }
-  }
-
-  _BatchPickGroup? _findLatestBatchPickGroup() {
-    final grouped = <int, List<CaptureRecord>>{};
-    for (final capture in _captures) {
-      grouped
-          .putIfAbsent(capture.sessionId, () => <CaptureRecord>[])
-          .add(capture);
-    }
-    final candidates = grouped.entries
-        .where((entry) => entry.value.length >= 2)
-        .map(
-          (entry) => _BatchPickGroup(
-            sessionId: entry.key,
-            captureIds: entry.value
-                .map((capture) => capture.id)
-                .toList(growable: false),
-            latestCreatedAt: entry.value
-                .map((capture) => capture.createdAt)
-                .reduce((left, right) => left.isAfter(right) ? left : right),
-          ),
-        )
-        .toList(growable: false);
-    if (candidates.isEmpty) {
-      return null;
-    }
-    candidates.sort((a, b) => b.latestCreatedAt.compareTo(a.latestCreatedAt));
-    return candidates.first;
   }
 
   Future<void> _saveCaptureToGallery(CaptureRecord capture) async {
@@ -241,6 +258,63 @@ class _HistoryPageState extends State<HistoryPage>
       if (mounted) {
         setState(() {
           _savingCaptureIds.remove(capture.id);
+        });
+      }
+    }
+  }
+
+  Future<void> _analyzeCapture(CaptureRecord capture) async {
+    setState(() {
+      _analyzingCaptureIds.add(capture.id);
+      _errorMessage = null;
+      _noticeMessage = null;
+    });
+
+    try {
+      final task = capture.captureType == 'background'
+          ? await widget.apiService.analyzeBackground(
+              accessToken: widget.accessToken,
+              sessionId: capture.sessionId,
+              captureId: capture.id,
+            )
+          : await widget.apiService.analyzePhoto(
+              accessToken: widget.accessToken,
+              sessionId: capture.sessionId,
+              captureId: capture.id,
+            );
+      if (!mounted) {
+        return;
+      }
+      await _loadHistory();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _noticeMessage = task.status == 'succeeded'
+            ? '抓拍 #${capture.id} 已完成 AI 分析。'
+            : '抓拍 #${capture.id} 已创建 AI 分析记录，但本次未成功完成。';
+        if (task.status != 'succeeded') {
+          _errorMessage = task.errorMessage ?? 'AI 分析失败，请检查管理端 AI 配置后重试。';
+        }
+      });
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.message;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = 'AI 分析失败，请稍后重试。';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _analyzingCaptureIds.remove(capture.id);
         });
       }
     }
@@ -289,6 +363,69 @@ class _HistoryPageState extends State<HistoryPage>
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchPickCard(BuildContext context) {
+    final selectedCount = _selectedBatchPickCaptureIds.length;
+    final canRun = selectedCount >= 2 && selectedCount <= 9;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'AI 优选',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                _StatusBadge(label: '已选 $selectedCount/9'),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '从历史照片中选择 2 到 9 张，AI 会从你选中的照片里挑出最好的一张。',
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(height: 1.5),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: <Widget>[
+                FilledButton.icon(
+                  onPressed: _isBatchPicking || !canRun
+                      ? null
+                      : _runBatchPickForSelectedCaptures,
+                  icon: _isBatchPicking
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome_outlined),
+                  label: Text(_isBatchPicking ? '优选中' : '执行 AI 优选'),
+                ),
+                if (selectedCount > 0)
+                  TextButton.icon(
+                    onPressed: _isBatchPicking
+                        ? null
+                        : _clearBatchPickSelection,
+                    icon: const Icon(Icons.clear_outlined),
+                    label: const Text('清空选择'),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -392,61 +529,27 @@ class _HistoryPageState extends State<HistoryPage>
                       : ListView(
                           padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
                           children: <Widget>[
-                            Card(
-                              child: Padding(
-                                padding: const EdgeInsets.all(18),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: <Widget>[
-                                    Text(
-                                      'AI 连拍选优',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      '对最近一组同会话抓拍执行 AI 选优，并把最佳图片标记为已选中。',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(height: 1.5),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    FilledButton.icon(
-                                      onPressed: _isBatchPicking
-                                          ? null
-                                          : _runBatchPickForLatestGroup,
-                                      icon: _isBatchPicking
-                                          ? const SizedBox(
-                                              width: 16,
-                                              height: 16,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.auto_awesome_outlined,
-                                            ),
-                                      label: const Text('对最近一组执行 AI 选优'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                            _buildBatchPickCard(context),
                             const SizedBox(height: 12),
                             ..._captures.map(
                               (capture) => _HistoryCaptureCard(
                                 capture: capture,
+                                selectedForBatchPick:
+                                    _selectedBatchPickCaptureIds.contains(
+                                      capture.id,
+                                    ),
                                 isSaving: _savingCaptureIds.contains(
                                   capture.id,
                                 ),
                                 isSaved: _savedCaptureIds.contains(capture.id),
+                                isAnalyzing: _analyzingCaptureIds.contains(
+                                  capture.id,
+                                ),
                                 onSaveToGallery: () =>
                                     _saveCaptureToGallery(capture),
+                                onAnalyze: () => _analyzeCapture(capture),
+                                onToggleBatchPick: () =>
+                                    _toggleBatchPickCapture(capture),
                               ),
                             ),
                           ],
@@ -459,18 +562,6 @@ class _HistoryPageState extends State<HistoryPage>
       ),
     );
   }
-}
-
-class _BatchPickGroup {
-  const _BatchPickGroup({
-    required this.sessionId,
-    required this.captureIds,
-    required this.latestCreatedAt,
-  });
-
-  final int sessionId;
-  final List<int> captureIds;
-  final DateTime latestCreatedAt;
 }
 
 class _HistorySessionCard extends StatelessWidget {
@@ -542,15 +633,23 @@ class _HistorySessionCard extends StatelessWidget {
 class _HistoryCaptureCard extends StatelessWidget {
   const _HistoryCaptureCard({
     required this.capture,
+    required this.selectedForBatchPick,
     required this.isSaving,
     required this.isSaved,
+    required this.isAnalyzing,
     required this.onSaveToGallery,
+    required this.onAnalyze,
+    required this.onToggleBatchPick,
   });
 
   final CaptureRecord capture;
+  final bool selectedForBatchPick;
   final bool isSaving;
   final bool isSaved;
+  final bool isAnalyzing;
   final VoidCallback onSaveToGallery;
+  final VoidCallback onAnalyze;
+  final VoidCallback onToggleBatchPick;
 
   @override
   Widget build(BuildContext context) {
@@ -579,7 +678,12 @@ class _HistoryCaptureCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (capture.isAiSelected) const _StatusBadge(label: 'AI 已选'),
+                  if (capture.latestAiTask != null)
+                    _StatusBadge(label: _aiTaskBadgeLabel(capture)),
+                  if (capture.isAiSelected) ...<Widget>[
+                    const SizedBox(width: 6),
+                    const _StatusBadge(label: 'AI 已选'),
+                  ],
                 ],
               ),
               const SizedBox(height: 12),
@@ -599,20 +703,47 @@ class _HistoryCaptureCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text('时间：${formatter.format(capture.createdAt.toLocal())}'),
               const SizedBox(height: 12),
-              FilledButton.tonalIcon(
-                onPressed: isSaving || isSaved ? null : onSaveToGallery,
-                icon: isSaving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        isSaved
-                            ? Icons.check_circle_outline
-                            : Icons.download_outlined,
-                      ),
-                label: Text(isSaved ? '已保存到相册' : '保存到手机相册'),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    onPressed: onToggleBatchPick,
+                    icon: Icon(
+                      selectedForBatchPick
+                          ? Icons.check_box_outlined
+                          : Icons.check_box_outline_blank_outlined,
+                    ),
+                    label: Text(selectedForBatchPick ? '已加入优选' : '加入优选'),
+                  ),
+                  FilledButton.tonalIcon(
+                    onPressed: isSaving || isSaved ? null : onSaveToGallery,
+                    icon: isSaving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            isSaved
+                                ? Icons.check_circle_outline
+                                : Icons.download_outlined,
+                          ),
+                    label: Text(isSaved ? '已保存到相册' : '保存到手机相册'),
+                  ),
+                  if (capture.latestAiTask == null)
+                    FilledButton.icon(
+                      onPressed: isAnalyzing ? null : onAnalyze,
+                      icon: isAnalyzing
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.auto_awesome_outlined),
+                      label: Text(isAnalyzing ? 'AI 分析中' : 'AI 分析'),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               Theme(
@@ -676,6 +807,17 @@ class _HistoryCaptureCard extends StatelessWidget {
       default:
         return raw;
     }
+  }
+
+  String _aiTaskBadgeLabel(CaptureRecord capture) {
+    final status = capture.latestAiTask?.status;
+    if (status == 'succeeded') {
+      return 'AI 已分析';
+    }
+    if (status == 'failed') {
+      return 'AI 失败';
+    }
+    return 'AI 处理中';
   }
 }
 

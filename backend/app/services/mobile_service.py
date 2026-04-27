@@ -328,10 +328,10 @@ class MobileService:
         captures = self.capture_repo.list_by_user_and_ids(user.id, payload.capture_ids)
         if len(captures) != len(payload.capture_ids):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="one or more captures not found")
-        if any(capture.session_id != payload.session_id for capture in captures):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="all captures must belong to the same session")
         if len(captures) < 2:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="batch-pick requires at least two captures")
+        if len(captures) > 9:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="batch-pick allows at most nine captures")
 
         if config is None:
             task = self._create_failed_ai_task(

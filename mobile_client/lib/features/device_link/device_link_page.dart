@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/ai_task_summary.dart';
 import '../../models/capture_record.dart';
+import '../../models/capture_session_summary.dart';
 import '../../models/device_health_summary.dart';
 import '../../models/device_link_result.dart';
 import '../../models/device_status_summary.dart';
@@ -23,6 +24,7 @@ import '../../services/api_client.dart';
 import '../../services/app_config.dart';
 import '../../services/device_api_service.dart';
 import '../../services/device_webrtc_service.dart';
+import '../../services/gallery_save_service.dart';
 import '../../services/mobile_api_service.dart';
 import '../../utils/score_formatter.dart';
 import '../template/template_photo_dialog.dart';
@@ -70,7 +72,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   static const String _prefsRecentConnectionsKey =
       'device_link.recent_connections';
   static const String _mobilePushStreamUrl = 'mobile_push';
-  static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 50);
+  static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 66);
   static const Duration _manualMoveRepeatInterval = Duration(milliseconds: 110);
   static const Duration _mobilePushSocketTimeout = Duration(seconds: 8);
   static const List<String> _modes = <String>[
@@ -82,6 +84,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   final DeviceApiService _deviceApiService = const DeviceApiService();
   final DeviceWebRtcService _deviceWebRtcService = const DeviceWebRtcService();
+  final GallerySaveService _gallerySaveService = const GallerySaveService();
   late final TextEditingController _baseUrlController;
   late final TextEditingController _streamUrlController;
   late final TextEditingController _sessionCodeController;
@@ -116,6 +119,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   String? _preferredAiResultKind;
   DateTime? _lastAiResultAt;
   AiTaskSummary? _lastBackendAiTask;
+  CaptureSessionSummary? _deviceHistorySession;
   DateTime? _lastStatusUpdatedAt;
   Timer? _pollTimer;
   Timer? _persistTimer;
@@ -156,6 +160,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Orientation? _lastScreenOrientation;
   final List<_DeviceActionRecord> _actionRecords = <_DeviceActionRecord>[];
   final List<_DeviceCaptureRecord> _captureRecords = <_DeviceCaptureRecord>[];
+  final Map<String, int> _deviceHistoryCaptureIds = <String, int>{};
   List<_DeviceConnectionPreset> _recentConnections =
       const <_DeviceConnectionPreset>[];
 
@@ -822,9 +827,18 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     await _runAction(() async {
+      final detection = <String, bool>{};
+      if (key == 'show_live_body_skeleton') {
+        detection['enable_pose_landmarks'] = value;
+      } else if (key == 'show_live_face_mesh') {
+        detection['enable_face_landmarks'] = value;
+      } else if (key == 'show_live_hands') {
+        detection['enable_hand_landmarks'] = value;
+      }
       final status = await _deviceApiService.updateDeviceConfig(
         baseUrl: _baseUrlController.text,
         overlay: <String, bool>{key: value},
+        detection: detection.isEmpty ? null : detection,
       );
       setState(() {
         _status = status;
@@ -977,18 +991,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       });
 
       try {
-        try {
-          await _startMobilePushWebRtc();
-        } catch (error) {
-          await _stopWebRtcSession();
-          await _startLegacyMobilePush();
-          if (mounted) {
-            setState(() {
-              _mobilePushErrorMessage =
-                  'WebRTC 启动失败，已切换到 WebSocket/JPEG fallback：$error';
-            });
-          }
-        }
+        await _startLegacyMobilePush();
       } catch (_) {
         await _stopMobilePush(silent: true);
         rethrow;
@@ -1015,12 +1018,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       baseUrl: _baseUrlController.text,
       lensDirection: camera.lensDirection,
       onConnectionState: (RTCPeerConnectionState state) {
+        _recordMobilePushDebug('WebRTC connection: $state');
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
             state ==
                 RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
           _setMobilePushError('WebRTC 连接已断开，请检查设备运行时服务和局域网连接。');
         }
       },
+      onDebug: _recordMobilePushDebug,
     );
     if (!mounted) {
       await session.dispose();
@@ -1563,6 +1568,16 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     });
   }
 
+  void _recordMobilePushDebug(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _syncMessage = message;
+      _addActionRecord('system', message);
+    });
+  }
+
   Future<void> _startPreviewStream() async {
     if (_previewSocket != null || _status?.sessionOpened != true) {
       return;
@@ -2075,6 +2090,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         autoAnalyze: _analyzeCaptureAfterShot,
       );
       await _refreshStatusSilently();
+
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
         _rememberDeviceCapturePath(
           captureResult.path,
@@ -2460,7 +2480,14 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
     if (existingIndex >= 0) {
       final existing = _captureRecords.removeAt(existingIndex);
-      _captureRecords.insert(0, existing);
+      _captureRecords.insert(
+        0,
+        existing.copyWith(
+          backendCaptureId:
+              existing.backendCaptureId ??
+              _deviceHistoryCaptureIds[normalizedPath],
+        ),
+      );
       return;
     }
     _captureRecords.insert(
@@ -2469,6 +2496,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         path: normalizedPath,
         createdAt: DateTime.now(),
         source: source,
+        backendCaptureId: _deviceHistoryCaptureIds[normalizedPath],
       ),
     );
     if (_captureRecords.length > 12) {
@@ -2495,6 +2523,135 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     }
   }
 
+  Future<CaptureRecord?> _tryRecordDeviceCaptureInHistory(
+    String rawPath,
+  ) async {
+    final path = rawPath.trim();
+    if (path.isEmpty) {
+      return null;
+    }
+    try {
+      final capture = await _recordDeviceCaptureInHistory(path);
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _deviceHistoryCaptureIds[path] = capture.id;
+        final index = _captureRecords.indexWhere((item) => item.path == path);
+        if (index >= 0) {
+          _captureRecords[index] = _captureRecords[index].copyWith(
+            backendCaptureId: capture.id,
+          );
+        }
+        _addActionRecord('capture', '设备抓拍已写入历史会话。');
+      });
+      return capture;
+    } on ApiException catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _errorMessage =
+            'Device capture succeeded, but saving it to history failed: ${error.message}';
+        _addActionRecord('error', _errorMessage!);
+      });
+      return null;
+    } catch (_) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _errorMessage =
+            'Device capture succeeded, but saving it to history failed. Check the backend service and network.';
+        _addActionRecord('error', _errorMessage!);
+      });
+      return null;
+    }
+  }
+
+  Future<CaptureRecord> _recordDeviceCaptureInHistory(String path) async {
+    final existingIndex = _captureRecords.indexWhere(
+      (item) => item.path == path && item.backendCaptureId != null,
+    );
+    final existingCaptureId = existingIndex >= 0
+        ? _captureRecords[existingIndex].backendCaptureId
+        : _deviceHistoryCaptureIds[path];
+    if (existingCaptureId != null) {
+      final captures = await widget.mobileApiService.getHistoryCaptures(
+        accessToken: widget.accessToken,
+      );
+      for (final capture in captures) {
+        if (capture.id == existingCaptureId) {
+          return capture;
+        }
+      }
+    }
+
+    final bytes = await _deviceApiService.downloadCaptureFile(
+      baseUrl: _baseUrlController.text,
+      path: path,
+    );
+    final rootDir = await getApplicationDocumentsDirectory();
+    final uploadDir = Directory('${rootDir.path}/device_history_uploads');
+    await uploadDir.create(recursive: true);
+    final fileName = _deviceCaptureFileName(path);
+    final localFile = File('${uploadDir.path}/$fileName');
+    await localFile.writeAsBytes(bytes, flush: true);
+
+    final historySession = await _ensureDeviceHistorySession();
+    final uploadedFile = await widget.mobileApiService.uploadCaptureFile(
+      accessToken: widget.accessToken,
+      filePath: localFile.path,
+    );
+    return widget.mobileApiService.createCapture(
+      accessToken: widget.accessToken,
+      sessionId: historySession.id,
+      fileUrl: uploadedFile.fileUrl,
+      captureType: 'device_link',
+      storageProvider: uploadedFile.storageProvider,
+      metadata: <String, dynamic>{
+        'entry': 'device_link_page',
+        'device_capture_path': path,
+        'device_capture_url': _deviceCaptureFileUrl(path),
+        'device_base_url': _normalizedDeviceBaseUrl(_baseUrlController.text),
+        'device_session_code':
+            _status?.sessionCode ?? _sessionCodeController.text.trim(),
+        'stream_url': _streamUrlController.text.trim(),
+        'local_upload_path': localFile.path,
+        'storage_path': uploadedFile.storagePath,
+        'relative_path': uploadedFile.relativePath,
+        'original_filename': uploadedFile.originalFilename,
+        'content_type': uploadedFile.contentType,
+        'auto_analyze_requested': _analyzeCaptureAfterShot,
+        'selected_template_id': _selectedTemplate?.id,
+        'selected_template_name': _selectedTemplate?.name,
+      },
+    );
+  }
+
+  Future<CaptureSessionSummary> _ensureDeviceHistorySession() async {
+    final existing = _deviceHistorySession;
+    if (existing != null) {
+      return existing;
+    }
+    final session = await widget.mobileApiService.createCaptureSession(
+      accessToken: widget.accessToken,
+      templateId: _selectedTemplate?.id,
+      mode: 'device_link',
+      metadata: <String, dynamic>{
+        'entry': 'device_link_page',
+        'device_base_url': _normalizedDeviceBaseUrl(_baseUrlController.text),
+        'device_session_code':
+            _status?.sessionCode ?? _sessionCodeController.text.trim(),
+        'stream_url': _streamUrlController.text.trim(),
+        'mobile_platform': Platform.operatingSystem,
+        'selected_template_name': _selectedTemplate?.name,
+      },
+    );
+    _deviceHistorySession = session;
+    return session;
+  }
+
   Future<void> _saveDeviceCaptureToPhone(_DeviceCaptureRecord record) async {
     if (_isSavingDeviceCapture) {
       return;
@@ -2515,6 +2672,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       final fileName = _deviceCaptureFileName(record.path);
       final localFile = File('${captureDir.path}/$fileName');
       await localFile.writeAsBytes(bytes, flush: true);
+      final galleryPath = await _gallerySaveService.saveImageBytes(
+        bytes: bytes,
+        fileName: fileName,
+      );
 
       if (!mounted) {
         return;
@@ -2529,7 +2690,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             savedAt: DateTime.now(),
           );
         }
-        _syncMessage = '已保存到手机：$fileName';
+        _syncMessage = galleryPath == null || galleryPath.isEmpty
+            ? '已保存到手机：$fileName'
+            : '已保存到手机相册：$fileName';
       });
     } catch (error) {
       if (!mounted) {
@@ -2573,6 +2736,31 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     return Uri.parse(
       '$normalizedBaseUrl/api/device/capture/file',
     ).replace(queryParameters: <String, String>{'path': rawPath}).toString();
+  }
+
+  String _deviceTemplateImageUrl(DeviceTemplateSummary template) {
+    final normalizedBaseUrl = _normalizedDeviceBaseUrl(_baseUrlController.text);
+    return Uri.parse(
+      '$normalizedBaseUrl/api/device/templates/${Uri.encodeComponent(template.id)}/image',
+    ).toString();
+  }
+
+  String? _templatePreviewImageUrl(TemplateSummary template) {
+    final rawUrl = template.previewImageUrl?.trim();
+    if (rawUrl == null || rawUrl.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri != null && uri.hasScheme) {
+      return rawUrl;
+    }
+
+    final apiBaseUrl = AppConfig.apiBaseUrl;
+    final origin = apiBaseUrl.endsWith('/api')
+        ? apiBaseUrl.substring(0, apiBaseUrl.length - 4)
+        : apiBaseUrl;
+    final path = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
+    return '$origin$path';
   }
 
   Future<void> _refreshStatusSilently() async {
@@ -3213,9 +3401,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Widget _buildSessionActionsSection(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final buttonWidth = constraints.maxWidth > 600
-            ? (constraints.maxWidth - 36) / 4
-            : (constraints.maxWidth - 12) / 2;
+        final columns = constraints.maxWidth >= 680
+            ? 4
+            : constraints.maxWidth >= 360
+            ? 2
+            : 1;
+        final buttonWidth =
+            (constraints.maxWidth - (columns - 1) * 12) / columns;
         return Wrap(
           spacing: 12,
           runSpacing: 12,
@@ -3294,8 +3486,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final description = _isMobilePushEnabled
         ? (_webRtcSession != null
               ? 'WebRTC 推流中，最近预览 $lastFrame。'
-              : 'WebSocket fallback 推流中，已发送 $_mobilePushFrameCount 帧，最近 $lastFrame。')
-        : '优先使用 WebRTC 推送手机摄像头，失败时自动回退到 WebSocket/JPEG fallback。';
+              : 'WebSocket 推流中，已发送 $_mobilePushFrameCount 帧，最近 $lastFrame。')
+        : '使用 GitHub 旧版 WebSocket/NV21 链路推送手机摄像头画面。';
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -3368,7 +3560,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                       ? null
                       : () => unawaited(_switchMobilePushCamera()),
                   icon: const Icon(Icons.cameraswitch_outlined),
-                  label: Text(_mobilePushSwitchTargetLabel()),
+                  label: Text(
+                    _mobilePushSwitchTargetLabel(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),
@@ -3411,8 +3607,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                 label: '上移',
               ),
               const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
                 children: <Widget>[
                   _ManualMoveHoldButton(
                     enabled: canManualMove,
@@ -3421,13 +3620,11 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                     icon: const Icon(Icons.keyboard_arrow_left),
                     label: '左移',
                   ),
-                  const SizedBox(width: 10),
                   OutlinedButton.icon(
                     onPressed: _isBusy ? null : _home,
                     icon: const Icon(Icons.center_focus_strong_outlined),
                     label: const Text('回中'),
                   ),
-                  const SizedBox(width: 10),
                   _ManualMoveHoldButton(
                     enabled: canManualMove,
                     onStart: () => _startManualMoveRepeat('right'),
@@ -3821,21 +4018,42 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
                         });
                       },
               ),
-              ..._templates.map(
-                (template) => _ModeChip(
-                  label: template.name,
-                  selected: _selectedTemplate?.id == template.id,
-                  onTap: _isBusy
-                      ? null
-                      : () {
-                          setState(() {
-                            _selectedTemplate = template;
-                            _syncMessage = '已选择模板${template.name}';
-                          });
-                        },
-                ),
-              ),
             ],
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columnCount = constraints.maxWidth >= 360 ? 3 : 2;
+              final cardWidth = math.max(
+                112.0,
+                (constraints.maxWidth - (columnCount - 1) * 10) / columnCount,
+              );
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: _templates
+                    .map(
+                      (template) => SizedBox(
+                        width: cardWidth,
+                        child: _TemplatePreviewCard(
+                          name: template.name,
+                          imageUrl: _templatePreviewImageUrl(template),
+                          meta: template.templateType,
+                          selected: _selectedTemplate?.id == template.id,
+                          onTap: _isBusy
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _selectedTemplate = template;
+                                    _syncMessage = '已选择模板${template.name}';
+                                  });
+                                },
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              );
+            },
           ),
           const SizedBox(height: 12),
           FilledButton.tonalIcon(
@@ -4306,7 +4524,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
 
     if (isLandscape) {
-      final panelWidth = panel == _DeviceHudPanel.device ? 420.0 : 360.0;
+      final desiredPanelWidth = panel == _DeviceHudPanel.device ? 420.0 : 360.0;
+      final availablePanelWidth =
+          MediaQuery.sizeOf(context).width - sideInset - 104;
+      final panelWidth = math.max(
+        280.0,
+        math.min(desiredPanelWidth, availablePanelWidth),
+      );
       return Positioned(
         top: math.max(92, mediaPadding.top + 70),
         bottom: math.max(14, bottomPadding + 14),
@@ -4566,27 +4790,43 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             style: TextStyle(color: Colors.white.withValues(alpha: 0.66)),
           )
         else
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _deviceTemplates
-                .map(
-                  (template) => _HudActionChip(
-                    label:
-                        '${template.name}${template.posePointCount > 0 ? ' · ${template.posePointCount}点' : ''}',
-                    selected: _selectedDeviceTemplate?.id == template.id,
-                    onTap: _isBusy
-                        ? null
-                        : () {
-                            setState(() {
-                              _selectedDeviceTemplate = template;
-                              _selectedTemplate = null;
-                              _syncMessage = '已选择树莓派模板：';
-                            });
-                          },
-                  ),
-                )
-                .toList(growable: false),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columnCount = constraints.maxWidth >= 360 ? 3 : 2;
+              final cardWidth = math.max(
+                112.0,
+                (constraints.maxWidth - (columnCount - 1) * 8) / columnCount,
+              );
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _deviceTemplates
+                    .map(
+                      (template) => SizedBox(
+                        width: cardWidth,
+                        child: _TemplatePreviewCard(
+                          name: template.name,
+                          imageUrl: _deviceTemplateImageUrl(template),
+                          meta: template.posePointCount > 0
+                              ? '${template.posePointCount}点'
+                              : '暂无关键点',
+                          selected: _selectedDeviceTemplate?.id == template.id,
+                          dark: true,
+                          onTap: _isBusy
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _selectedDeviceTemplate = template;
+                                    _selectedTemplate = null;
+                                    _syncMessage = '已选择树莓派模板：${template.name}';
+                                  });
+                                },
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              );
+            },
           ),
       ],
     );
@@ -4755,6 +4995,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _status?.latestCapture ?? const DeviceLatestCaptureSummary();
     final canUpdate = _status?.sessionOpened == true && !_isBusy;
     final recentCaptures = _captureRecords.take(4).toList(growable: false);
+    final countdownRemaining = gesture.captureCountdownRemainingSeconds;
+    final countdownLabel =
+        countdownRemaining == null ? null : math.max(1, countdownRemaining.ceil());
 
     Widget option({
       required IconData icon,
@@ -4780,7 +5023,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           children: <Widget>[
             option(
               icon: Icons.auto_awesome_outlined,
-              label: '抓拍后AI分析',
+              label: '设备本地AI分析',
               selected: _analyzeCaptureAfterShot || gesture.autoAnalyzeEnabled,
               onTap: () => _setCaptureAnalyzeAfterShot(
                 !(_analyzeCaptureAfterShot || gesture.autoAnalyzeEnabled),
@@ -4810,6 +5053,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             ),
           ],
         ),
+        if (gesture.captureCountdownActive && countdownLabel != null) ...<Widget>[
+          const SizedBox(height: 10),
+          _GestureCountdownBanner(countdown: countdownLabel),
+        ],
         const SizedBox(height: 8),
         Text(
           '手势：检测到 ${gesture.handCount} 只手；张手握拳需要模板构图 ready，OK 可强制抓拍。',
@@ -5483,7 +5730,7 @@ class _ManualMoveHoldButton extends StatelessWidget {
       child: FilledButton.tonalIcon(
         onPressed: enabled ? () {} : null,
         icon: icon,
-        label: Text(label),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
   }
@@ -5631,21 +5878,30 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: active ? const Color(0x140D5C63) : const Color(0xFFF4F1EA),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: active ? const Color(0xFF0D5C63) : const Color(0xFFD3C7B8),
+    final maxPillWidth = math.max(
+      140.0,
+      math.min(240.0, MediaQuery.sizeOf(context).width - 56),
+    );
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxPillWidth),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? const Color(0x140D5C63) : const Color(0xFFF4F1EA),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: active ? const Color(0xFF0D5C63) : const Color(0xFFD3C7B8),
+          ),
         ),
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(
-          color: active ? const Color(0xFF0D5C63) : const Color(0xFF6A6258),
-          fontWeight: FontWeight.w700,
-          fontSize: 12.5,
+        child: Text(
+          '$label: $value',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: active ? const Color(0xFF0D5C63) : const Color(0xFF6A6258),
+            fontWeight: FontWeight.w700,
+            fontSize: 12.5,
+          ),
         ),
       ),
     );
@@ -5823,6 +6079,9 @@ class _HudStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < 360) {
+      return const SizedBox.shrink();
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
@@ -5843,6 +6102,58 @@ class _HudStatusBadge extends StatelessWidget {
           fontWeight: FontWeight.w800,
           fontSize: 12,
         ),
+      ),
+    );
+  }
+}
+
+class _GestureCountdownBanner extends StatelessWidget {
+  const _GestureCountdownBanner({required this.countdown});
+
+  final int countdown;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xCC10181C),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFBDF6EF), width: 1.2),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFFBDF6EF),
+            ),
+            child: Text(
+              '$countdown',
+              style: const TextStyle(
+                color: Color(0xFF0D3F43),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '手势已识别，准备抓拍',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.95),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5888,6 +6199,8 @@ class _HudNavButton extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: selected
                       ? const Color(0xFFBDF6EF)
@@ -5952,43 +6265,207 @@ class _HudActionChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected
-              ? const Color(0x8847D7B4)
-              : Colors.white.withValues(alpha: enabled ? 0.13 : 0.06),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
+    final maxChipWidth = math.max(
+      128.0,
+      math.min(220.0, MediaQuery.sizeOf(context).width - 56),
+    );
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxChipWidth),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+          decoration: BoxDecoration(
             color: selected
-                ? const Color(0xFFBDF6EF)
-                : Colors.white.withValues(alpha: 0.18),
+                ? const Color(0x8847D7B4)
+                : Colors.white.withValues(alpha: enabled ? 0.13 : 0.06),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFFBDF6EF)
+                  : Colors.white.withValues(alpha: 0.18),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (icon != null) ...<Widget>[
+                Icon(
+                  icon,
+                  size: 17,
+                  color: Colors.white.withValues(alpha: enabled ? 0.94 : 0.42),
+                ),
+                const SizedBox(width: 7),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(
+                      alpha: enabled ? 0.94 : 0.42,
+                    ),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (icon != null) ...<Widget>[
-              Icon(
-                icon,
-                size: 17,
-                color: Colors.white.withValues(alpha: enabled ? 0.94 : 0.42),
+      ),
+    );
+  }
+}
+
+class _TemplatePreviewCard extends StatelessWidget {
+  const _TemplatePreviewCard({
+    required this.name,
+    required this.selected,
+    required this.onTap,
+    this.imageUrl,
+    this.meta,
+    this.dark = false,
+  });
+
+  final String name;
+  final String? imageUrl;
+  final String? meta;
+  final bool selected;
+  final bool dark;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final foreground = dark ? Colors.white : const Color(0xFF17313A);
+    final muted = dark
+        ? Colors.white.withValues(alpha: enabled ? 0.66 : 0.38)
+        : const Color(0xFF607178);
+    final borderColor = selected
+        ? (dark ? const Color(0xFFBDF6EF) : const Color(0xFF0D5C63))
+        : (dark
+              ? Colors.white.withValues(alpha: 0.18)
+              : const Color(0xFFD8E0DE));
+    final background = selected
+        ? (dark ? const Color(0x3347D7B4) : const Color(0x140D5C63))
+        : (dark
+              ? Colors.white.withValues(alpha: enabled ? 0.08 : 0.04)
+              : Colors.white);
+    final url = imageUrl?.trim();
+
+    return Tooltip(
+      message: name,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor, width: selected ? 1.4 : 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Stack(
+                children: <Widget>[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: url == null || url.isEmpty
+                          ? _TemplatePreviewPlaceholder(dark: dark)
+                          : Image.network(
+                              url,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  _TemplatePreviewPlaceholder(dark: dark),
+                            ),
+                    ),
+                  ),
+                  if (selected)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: dark
+                              ? const Color(0xFF0D5C63)
+                              : const Color(0xFF0D5C63),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.74),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.check,
+                          size: 15,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(width: 7),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: foreground.withValues(alpha: enabled ? 1 : 0.46),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12.5,
+                ),
+              ),
+              if (meta != null && meta!.trim().isNotEmpty) ...<Widget>[
+                const SizedBox(height: 2),
+                Text(
+                  meta!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: muted,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ],
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: enabled ? 0.94 : 0.42),
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplatePreviewPlaceholder extends StatelessWidget {
+  const _TemplatePreviewPlaceholder({required this.dark});
+
+  final bool dark;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: dark
+          ? Colors.white.withValues(alpha: 0.08)
+          : const Color(0xFFE8EFEC),
+      child: Center(
+        child: Icon(
+          Icons.image_outlined,
+          size: 26,
+          color: dark
+              ? Colors.white.withValues(alpha: 0.54)
+              : const Color(0xFF6E7C80),
         ),
       ),
     );
@@ -6404,6 +6881,7 @@ class _DeviceCaptureRecord {
     required this.source,
     this.localPath,
     this.savedAt,
+    this.backendCaptureId,
   });
 
   final String path;
@@ -6411,6 +6889,7 @@ class _DeviceCaptureRecord {
   final String source;
   final String? localPath;
   final DateTime? savedAt;
+  final int? backendCaptureId;
 
   _DeviceCaptureRecord copyWith({
     String? path,
@@ -6418,6 +6897,7 @@ class _DeviceCaptureRecord {
     String? source,
     String? localPath,
     DateTime? savedAt,
+    int? backendCaptureId,
   }) {
     return _DeviceCaptureRecord(
       path: path ?? this.path,
@@ -6425,6 +6905,7 @@ class _DeviceCaptureRecord {
       source: source ?? this.source,
       localPath: localPath ?? this.localPath,
       savedAt: savedAt ?? this.savedAt,
+      backendCaptureId: backendCaptureId ?? this.backendCaptureId,
     );
   }
 }

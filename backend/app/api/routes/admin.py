@@ -329,6 +329,25 @@ def list_captures(
     return ApiResponse(data=ListData(items=items))
 
 
+@router.delete("/captures/{capture_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_capture(
+    capture_id: int,
+    _: User = Depends(get_current_admin),
+    session: Session = Depends(get_db_session),
+) -> Response:
+    AdminService(session).delete_capture(capture_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/captures", response_model=ApiResponse[dict])
+def delete_all_captures(
+    _: User = Depends(get_current_admin),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict]:
+    deleted_count = AdminService(session).delete_all_captures()
+    return ApiResponse(message="captures deleted", data={"deleted_count": deleted_count})
+
+
 @router.get("/ai/tasks", response_model=ApiResponse[ListData[AiTaskRead]])
 def list_ai_tasks(
     _: User = Depends(get_current_admin),
@@ -336,6 +355,25 @@ def list_ai_tasks(
 ) -> ApiResponse[ListData[AiTaskRead]]:
     items = [AiTaskRead.model_validate(item) for item in AdminService(session).list_ai_tasks()]
     return ApiResponse(data=ListData(items=items))
+
+
+@router.delete("/ai/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ai_task(
+    task_id: int,
+    _: User = Depends(get_current_admin),
+    session: Session = Depends(get_db_session),
+) -> Response:
+    AdminService(session).delete_ai_task(task_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/ai/tasks", response_model=ApiResponse[dict])
+def delete_all_ai_tasks(
+    _: User = Depends(get_current_admin),
+    session: Session = Depends(get_db_session),
+) -> ApiResponse[dict]:
+    deleted_count = AdminService(session).delete_all_ai_tasks()
+    return ApiResponse(message="ai tasks deleted", data={"deleted_count": deleted_count})
 
 
 @router.get("/statistics/overview", response_model=ApiResponse[OverviewStatisticsRead])

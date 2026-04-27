@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from device_runtime.api.session_manager import session_manager
@@ -54,6 +56,20 @@ def list_templates() -> dict:
             "count": len(profiles),
         },
     }
+
+
+@router.get("/{template_id}/image")
+def get_template_image(template_id: str) -> FileResponse:
+    profile = session_manager.get_template(template_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"template not found: {template_id}")
+
+    image_path = Path(profile.image_path)
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="template image not found")
+
+    media_type = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(image_path), media_type=media_type)
 
 
 @router.post("/import")

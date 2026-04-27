@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
     uploads_dir.mkdir(parents=True, exist_ok=True)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(settings.cors_origins),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -11,10 +12,12 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../../models/ai_task_summary.dart';
 import '../../models/capture_record.dart';
 import '../../models/capture_session_summary.dart';
+import '../../models/capture_upload_result.dart';
 import '../../models/device_link_result.dart';
 import '../../models/normalized_geometry.dart';
 import '../../models/template_summary.dart';
 import '../../services/api_client.dart';
+import '../../services/app_config.dart';
 import '../../services/local_image_resolver.dart';
 import '../../services/media_pipe_pose_detector_service.dart';
 import '../../services/mobile_api_service.dart';
@@ -59,12 +62,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _isPreparing = true;
   bool _isCapturing = false;
   bool _isSubmitting = false;
+  bool _isRecordingCapture = false;
   bool _isLoadingTemplates = false;
   bool _isCreatingDemoTemplate = false;
   bool _isDeletingTemplate = false;
   String? _errorMessage;
   String? _syncMessage;
   XFile? _lastCapture;
+  String? _lastCaptureRecordPath;
+  Future<CaptureRecord>? _lastCaptureRecordFuture;
   CaptureSessionSummary? _captureSession;
   CaptureRecord? _lastUploadedCapture;
   AiTaskSummary? _lastAiTask;
@@ -422,11 +428,32 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     });
 
     try {
-      final template = await widget.apiService.createTemplateFromPhoto(
-        accessToken: widget.accessToken,
-        name: draft.name,
-        filePath: draft.filePath,
-      );
+      late final TemplateSummary template;
+      if (draft.recognitionMode == TemplateRecognitionMode.local) {
+        final templateData = await _buildLocalTemplateDataFromPhoto(
+          name: draft.name,
+          filePath: draft.filePath,
+        );
+        final uploadedFile = await widget.apiService.uploadCaptureFile(
+          accessToken: widget.accessToken,
+          filePath: draft.filePath,
+        );
+        templateData['source_image_url'] = uploadedFile.fileUrl;
+        templateData['image_path'] = uploadedFile.fileUrl;
+        template = await widget.apiService.createTemplate(
+          accessToken: widget.accessToken,
+          name: draft.name,
+          sourceImageUrl: uploadedFile.fileUrl,
+          previewImageUrl: uploadedFile.fileUrl,
+          templateData: templateData,
+        );
+      } else {
+        template = await widget.apiService.createTemplateFromPhoto(
+          accessToken: widget.accessToken,
+          name: draft.name,
+          filePath: draft.filePath,
+        );
+      }
 
       if (!mounted) {
         return;
@@ -438,13 +465,19 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           ..._templates.where((item) => item.id != template.id),
         ];
       });
-      _showBanner(syncMessage: '已新增模板并自动选中：${template.name}');
+      _showBanner(
+        syncMessage:
+            '已新增模板并自动选中：${template.name}（${draft.recognitionMode == TemplateRecognitionMode.local ? '本地识别' : '后端识别'}）',
+      );
       _selectTemplate(template);
     } on ApiException catch (error) {
       if (!mounted) {
         return;
       }
-      _showBanner(errorMessage: error.message);
+      _showBanner(
+        errorMessage:
+            '${error.message}${draft.recognitionMode == TemplateRecognitionMode.backend ? '。也可以重新新增模板时切换为“本地识别”再试。' : ''}',
+      );
     } catch (_) {
       if (!mounted) {
         return;
@@ -457,6 +490,261 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         });
       }
     }
+  }
+
+  Future<Map<String, dynamic>> _buildLocalTemplateDataFromPhoto({
+    required String name,
+    required String filePath,
+  }) async {
+    final imageFile = File(filePath);
+    final imageBytes = await imageFile.readAsBytes();
+    final image = await _decodeImage(imageBytes);
+    final poses = await _poseDetector.processImage(
+      InputImage.fromFilePath(filePath),
+    );
+    if (poses.isEmpty) {
+      throw const ApiException('本地识别未检测到人体，请换一张人物更完整、更清晰的模板照片。');
+    }
+
+    final pose = poses.reduce((best, current) {
+      return current.landmarks.length > best.landmarks.length ? current : best;
+    });
+    final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+    final points = _templatePointsFromPose(pose, imageSize);
+    if (points.length < 6) {
+      throw const ApiException('本地识别到的人体关键点太少，请选择无遮挡、身体更完整的照片。');
+    }
+
+    final bbox = _templateBboxFromPoints(points.values.toList(growable: false));
+    final headBox = _templateHeadBoxFromPoints(points, fallbackBodyBox: bbox);
+    final headAnchor = headBox == null
+        ? null
+        : NormalizedPoint(
+            headBox.left + headBox.width * 0.5,
+            headBox.top + headBox.height * 0.5,
+          );
+    final posePointsImage = <String, List<double>>{};
+    final posePointsBbox = <String, List<double>>{};
+    for (final entry in points.entries) {
+      final key = entry.key.toString();
+      final point = entry.value;
+      posePointsImage[key] = <double>[point.x, point.y];
+      posePointsBbox[key] = <double>[
+        _safeNormalizeInBox(point.x, bbox.left, bbox.width),
+        _safeNormalizeInBox(point.y, bbox.top, bbox.height),
+      ];
+    }
+
+    return <String, dynamic>{
+      'name': name,
+      'image_path': filePath,
+      'bbox_norm': <double>[bbox.left, bbox.top, bbox.width, bbox.height],
+      if (headBox != null)
+        'head_bbox_norm': <double>[
+          headBox.left,
+          headBox.top,
+          headBox.width,
+          headBox.height,
+        ],
+      if (headAnchor != null) 'head_anchor_norm_x': headAnchor.x,
+      if (headAnchor != null) 'head_anchor_norm_y': headAnchor.y,
+      'pose_points': posePointsBbox,
+      'pose_points_image': posePointsImage,
+      'pose_points_bbox': posePointsBbox,
+      'created_by': 'mobile_local_pose',
+    };
+  }
+
+  Future<ui.Image> _decodeImage(Uint8List imageBytes) {
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromList(imageBytes, completer.complete);
+    return completer.future;
+  }
+
+  Map<int, NormalizedPoint> _templatePointsFromPose(Pose pose, Size imageSize) {
+    final result = <int, NormalizedPoint>{};
+    const mapping = <PoseLandmarkType, int>{
+      PoseLandmarkType.nose: 0,
+      PoseLandmarkType.leftEyeInner: 1,
+      PoseLandmarkType.leftEye: 2,
+      PoseLandmarkType.leftEyeOuter: 3,
+      PoseLandmarkType.rightEyeInner: 4,
+      PoseLandmarkType.rightEye: 5,
+      PoseLandmarkType.rightEyeOuter: 6,
+      PoseLandmarkType.leftEar: 7,
+      PoseLandmarkType.rightEar: 8,
+      PoseLandmarkType.leftMouth: 9,
+      PoseLandmarkType.rightMouth: 10,
+      PoseLandmarkType.leftShoulder: 11,
+      PoseLandmarkType.rightShoulder: 12,
+      PoseLandmarkType.leftElbow: 13,
+      PoseLandmarkType.rightElbow: 14,
+      PoseLandmarkType.leftWrist: 15,
+      PoseLandmarkType.rightWrist: 16,
+      PoseLandmarkType.leftPinky: 17,
+      PoseLandmarkType.rightPinky: 18,
+      PoseLandmarkType.leftIndex: 19,
+      PoseLandmarkType.rightIndex: 20,
+      PoseLandmarkType.leftThumb: 21,
+      PoseLandmarkType.rightThumb: 22,
+      PoseLandmarkType.leftHip: 23,
+      PoseLandmarkType.rightHip: 24,
+      PoseLandmarkType.leftKnee: 25,
+      PoseLandmarkType.rightKnee: 26,
+      PoseLandmarkType.leftAnkle: 27,
+      PoseLandmarkType.rightAnkle: 28,
+      PoseLandmarkType.leftHeel: 29,
+      PoseLandmarkType.rightHeel: 30,
+      PoseLandmarkType.leftFootIndex: 31,
+      PoseLandmarkType.rightFootIndex: 32,
+    };
+
+    for (final entry in mapping.entries) {
+      final landmark = pose.landmarks[entry.key];
+      if (landmark == null || landmark.likelihood < 0.15) {
+        continue;
+      }
+      result[entry.value] = _normalizePosePoint(
+        landmark.x,
+        landmark.y,
+        imageSize,
+      );
+    }
+    return result;
+  }
+
+  NormalizedRect _templateBboxFromPoints(List<NormalizedPoint> points) {
+    var minX = 1.0;
+    var minY = 1.0;
+    var maxX = 0.0;
+    var maxY = 0.0;
+    for (final point in points) {
+      minX = math.min(minX, point.x);
+      minY = math.min(minY, point.y);
+      maxX = math.max(maxX, point.x);
+      maxY = math.max(maxY, point.y);
+    }
+    final width = math.max(0.12, maxX - minX);
+    final height = math.max(0.20, maxY - minY);
+    final padX = math.min(0.08, width * 0.16);
+    final padY = math.min(0.10, height * 0.18);
+    return NormalizedRect(
+      left: _clamp01(minX - padX),
+      top: _clamp01(minY - padY),
+      width: _clampDimension(maxX - minX + padX * 2, minX - padX),
+      height: _clampDimension(maxY - minY + padY * 2, minY - padY),
+    );
+  }
+
+  NormalizedRect? _templateHeadBoxFromPoints(
+    Map<int, NormalizedPoint> points, {
+    required NormalizedRect fallbackBodyBox,
+  }) {
+    final facePoints = <NormalizedPoint>[
+      for (final index in <int>[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        if (points[index] != null) points[index]!,
+    ];
+    if (facePoints.isNotEmpty) {
+      return _templateHeadBoxFromFacePoints(facePoints);
+    }
+
+    final leftShoulder = points[11];
+    final rightShoulder = points[12];
+    if (leftShoulder != null && rightShoulder != null) {
+      final shoulderCenter = NormalizedPoint(
+        (leftShoulder.x + rightShoulder.x) * 0.5,
+        (leftShoulder.y + rightShoulder.y) * 0.5,
+      );
+      final shoulderWidth = (rightShoulder.x - leftShoulder.x).abs();
+      final width = _clampRange(shoulderWidth * 0.62, 0.10, 0.24);
+      final height = _clampRange(width * 1.12, 0.11, 0.26);
+      return _rectAroundPoint(
+        NormalizedPoint(shoulderCenter.x, shoulderCenter.y - height * 0.82),
+        width,
+        height,
+      );
+    }
+
+    final width = _clampRange(fallbackBodyBox.width * 0.38, 0.10, 0.24);
+    final height = _clampRange(fallbackBodyBox.height * 0.17, 0.11, 0.26);
+    return NormalizedRect(
+      left: _clamp01(
+        fallbackBodyBox.left + (fallbackBodyBox.width - width) * 0.5,
+      ),
+      top: _clamp01(fallbackBodyBox.top + fallbackBodyBox.height * 0.02),
+      width: _clampDimension(
+        width,
+        fallbackBodyBox.left + (fallbackBodyBox.width - width) * 0.5,
+      ),
+      height: _clampDimension(
+        height,
+        fallbackBodyBox.top + fallbackBodyBox.height * 0.02,
+      ),
+    );
+  }
+
+  NormalizedRect _templateHeadBoxFromFacePoints(List<NormalizedPoint> points) {
+    var minX = 1.0;
+    var minY = 1.0;
+    var maxX = 0.0;
+    var maxY = 0.0;
+    for (final point in points) {
+      minX = math.min(minX, point.x);
+      minY = math.min(minY, point.y);
+      maxX = math.max(maxX, point.x);
+      maxY = math.max(maxY, point.y);
+    }
+    final width = _clampRange((maxX - minX).abs() * 1.9, 0.10, 0.26);
+    final height = _clampRange((maxY - minY).abs() * 2.2, 0.10, 0.28);
+    return _rectAroundPoint(
+      NormalizedPoint((minX + maxX) * 0.5, (minY + maxY) * 0.5),
+      width,
+      height,
+    );
+  }
+
+  NormalizedRect _rectAroundPoint(
+    NormalizedPoint center,
+    double width,
+    double height,
+  ) {
+    final left = center.x - width * 0.5;
+    final top = center.y - height * 0.5;
+    return NormalizedRect(
+      left: _clamp01(left),
+      top: _clamp01(top),
+      width: _clampDimension(width, left),
+      height: _clampDimension(height, top),
+    );
+  }
+
+  double _clampRange(double value, double min, double max) {
+    return value.clamp(min, max);
+  }
+
+  double _safeNormalizeInBox(double value, double start, double size) {
+    if (size <= 0) {
+      return 0;
+    }
+    return _clamp01((value - start) / size);
+  }
+
+  String? _templatePreviewImageUrl(TemplateSummary template) {
+    final rawUrl = template.previewImageUrl?.trim();
+    if (rawUrl == null || rawUrl.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(rawUrl);
+    if (uri != null && uri.hasScheme) {
+      return rawUrl;
+    }
+
+    final apiBaseUrl = AppConfig.apiBaseUrl;
+    final origin = apiBaseUrl.endsWith('/api')
+        ? apiBaseUrl.substring(0, apiBaseUrl.length - 4)
+        : apiBaseUrl;
+    final path = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
+    return '$origin$path';
   }
 
   TemplateSummary? _resolvePreferredTemplate(List<TemplateSummary> templates) {
@@ -574,7 +862,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     setState(() {
       _selectedTemplate = null;
       _templateOverlayScene = null;
-      _captureSession = null;
       _overlayScene = _composeOverlayScene();
     });
     if (syncMessage != null && syncMessage.isNotEmpty) {
@@ -592,8 +879,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     setState(() {
       _shootMode = mode;
       _isShootModePickerExpanded = false;
-      _captureSession = null;
       _lastUploadedCapture = null;
+      _lastCaptureRecordPath = null;
+      _lastCaptureRecordFuture = null;
       _lastAiTask = null;
       _analysisOverlayScene = null;
       if (mode != _CameraShootMode.aiBurst) {
@@ -664,7 +952,10 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       return _analysisStatusLabel();
     }
     if (_lastUploadedCapture != null) {
-      return '已上传';
+      return _lastAiTask == null ? '已记录' : '已上传';
+    }
+    if (_isRecordingCapture) {
+      return '写入记录中';
     }
     if (_lastCapture != null) {
       return '已拍摄';
@@ -840,8 +1131,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         } else {
           _pendingBurstCaptures.clear();
         }
-        _captureSession = null;
         _lastUploadedCapture = null;
+        _lastCaptureRecordPath = null;
+        _lastCaptureRecordFuture = null;
         _lastAiTask = null;
         _analysisOverlayScene = null;
         _overlayScene = _composeOverlayScene();
@@ -849,8 +1141,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       _showBanner(
         syncMessage: _shootMode == _CameraShootMode.aiBurst
             ? '已加入AI连拍序列，当前共 ${_pendingBurstCaptures.length} 张'
-            : '照片已拍摄，可继续上传并生成分析结果。',
+            : '照片已拍摄，正在写入历史记录。',
       );
+      if (_shootMode != _CameraShootMode.aiBurst) {
+        unawaited(
+          _ensureSingleCaptureRecorded(
+            capture,
+          ).then<void>((_) {}).catchError((Object _) {}),
+        );
+      }
     } on CameraException catch (error) {
       if (!mounted) {
         return;
@@ -861,6 +1160,129 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       if (mounted) {
         setState(() {
           _isCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<CaptureSessionSummary> _createCaptureSessionForCurrentShot() {
+    return widget.apiService.createCaptureSession(
+      accessToken: widget.accessToken,
+      templateId: _selectedTemplate?.id,
+      mode: _sessionModeForCurrentShot(),
+      metadata: <String, dynamic>{
+        'mobile_platform': Platform.operatingSystem,
+        'entry': 'camera_capture_page',
+        'shoot_mode': _keyForShootMode(_shootMode),
+        'shoot_mode_label': _shootModeLabel,
+        'selected_template_name': _selectedTemplate?.name,
+        'mirror_preview': _shouldMirrorPreview,
+      },
+    );
+  }
+
+  Map<String, dynamic> _captureRecordMetadata({
+    required XFile capture,
+    required CaptureUploadResult uploadedFile,
+  }) {
+    return <String, dynamic>{
+      'local_path': capture.path,
+      'storage_path': uploadedFile.storagePath,
+      'relative_path': uploadedFile.relativePath,
+      'original_filename': uploadedFile.originalFilename,
+      'content_type': uploadedFile.contentType,
+      'shoot_mode': _keyForShootMode(_shootMode),
+      'overlay': <String, dynamic>{
+        'show_body_box': _overlaySettings.showBodyBox,
+        'show_skeleton': _overlaySettings.showSkeleton,
+        'show_template_box': _overlaySettings.showTemplateBox,
+        'show_template': _overlaySettings.showTemplate,
+      },
+      'selected_template_id': _selectedTemplate?.id,
+    };
+  }
+
+  Future<CaptureRecord> _ensureSingleCaptureRecorded(
+    XFile capture, {
+    bool showSuccessBanner = true,
+  }) {
+    if (_lastUploadedCapture != null && _lastCapture?.path == capture.path) {
+      return Future<CaptureRecord>.value(_lastUploadedCapture);
+    }
+    final pendingFuture = _lastCaptureRecordFuture;
+    if (_lastCaptureRecordPath == capture.path && pendingFuture != null) {
+      return pendingFuture;
+    }
+
+    final future = _uploadSingleCaptureRecord(
+      capture,
+      showSuccessBanner: showSuccessBanner,
+    );
+    _lastCaptureRecordPath = capture.path;
+    _lastCaptureRecordFuture = future;
+    return future;
+  }
+
+  Future<CaptureRecord> _uploadSingleCaptureRecord(
+    XFile capture, {
+    required bool showSuccessBanner,
+  }) async {
+    if (mounted && _lastCapture?.path == capture.path) {
+      setState(() {
+        _isRecordingCapture = true;
+      });
+    }
+
+    try {
+      final captureSession =
+          _captureSession ?? await _createCaptureSessionForCurrentShot();
+      final uploadedFile = await widget.apiService.uploadCaptureFile(
+        accessToken: widget.accessToken,
+        filePath: capture.path,
+      );
+      final uploadedCapture = await widget.apiService.createCapture(
+        accessToken: widget.accessToken,
+        sessionId: captureSession.id,
+        fileUrl: uploadedFile.fileUrl,
+        captureType: _captureTypeForCurrentMode(),
+        width: _controller?.value.previewSize?.height.round(),
+        height: _controller?.value.previewSize?.width.round(),
+        storageProvider: uploadedFile.storageProvider,
+        metadata: _captureRecordMetadata(
+          capture: capture,
+          uploadedFile: uploadedFile,
+        ),
+      );
+
+      if (mounted && _lastCapture?.path == capture.path) {
+        setState(() {
+          _captureSession = captureSession;
+          _lastUploadedCapture = uploadedCapture;
+          _overlayScene = _composeOverlayScene();
+        });
+        if (showSuccessBanner) {
+          _showBanner(syncMessage: '照片已写入拍摄历史，可稍后再进行 AI 分析。');
+        }
+      }
+      return uploadedCapture;
+    } on ApiException catch (error) {
+      if (mounted && _lastCapture?.path == capture.path) {
+        _lastCaptureRecordPath = null;
+        _lastCaptureRecordFuture = null;
+        _showBanner(errorMessage: '照片已拍摄，但写入历史失败：${error.message}');
+      }
+      rethrow;
+    } catch (_) {
+      if (mounted && _lastCapture?.path == capture.path) {
+        _lastCaptureRecordPath = null;
+        _lastCaptureRecordFuture = null;
+        _showBanner(errorMessage: '照片已拍摄，但写入历史失败，请检查后端服务和网络。');
+      }
+      rethrow;
+    } finally {
+      if (mounted && _lastCapture?.path == capture.path) {
+        setState(() {
+          _isRecordingCapture = false;
         });
       }
     }
@@ -883,21 +1305,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     });
 
     try {
+      if (_shootMode != _CameraShootMode.aiBurst && _lastCapture != null) {
+        await _ensureSingleCaptureRecorded(
+          _lastCapture!,
+          showSuccessBanner: false,
+        );
+      }
       final captureSession =
-          _captureSession ??
-          await widget.apiService.createCaptureSession(
-            accessToken: widget.accessToken,
-            templateId: _selectedTemplate?.id,
-            mode: _sessionModeForCurrentShot(),
-            metadata: <String, dynamic>{
-              'mobile_platform': Platform.operatingSystem,
-              'entry': 'camera_capture_page',
-              'shoot_mode': _keyForShootMode(_shootMode),
-              'shoot_mode_label': _shootModeLabel,
-              'selected_template_name': _selectedTemplate?.name,
-              'mirror_preview': _shouldMirrorPreview,
-            },
-          );
+          _captureSession ?? await _createCaptureSessionForCurrentShot();
 
       if (_shootMode == _CameraShootMode.aiBurst) {
         final uploadedCaptures = <CaptureRecord>[];
@@ -924,6 +1339,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               'overlay': <String, dynamic>{
                 'show_body_box': _overlaySettings.showBodyBox,
                 'show_skeleton': _overlaySettings.showSkeleton,
+                'show_template_box': _overlaySettings.showTemplateBox,
                 'show_template': _overlaySettings.showTemplate,
               },
               'selected_template_id': _selectedTemplate?.id,
@@ -970,33 +1386,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       }
 
       final capture = _lastCapture!;
-      final uploadedFile = await widget.apiService.uploadCaptureFile(
-        accessToken: widget.accessToken,
-        filePath: capture.path,
-      );
-
-      final uploadedCapture = await widget.apiService.createCapture(
-        accessToken: widget.accessToken,
-        sessionId: captureSession.id,
-        fileUrl: uploadedFile.fileUrl,
-        captureType: _captureTypeForCurrentMode(),
-        width: _controller?.value.previewSize?.height.round(),
-        height: _controller?.value.previewSize?.width.round(),
-        storageProvider: uploadedFile.storageProvider,
-        metadata: <String, dynamic>{
-          'local_path': capture.path,
-          'storage_path': uploadedFile.storagePath,
-          'relative_path': uploadedFile.relativePath,
-          'original_filename': uploadedFile.originalFilename,
-          'content_type': uploadedFile.contentType,
-          'shoot_mode': _keyForShootMode(_shootMode),
-          'overlay': <String, dynamic>{
-            'show_body_box': _overlaySettings.showBodyBox,
-            'show_skeleton': _overlaySettings.showSkeleton,
-            'show_template': _overlaySettings.showTemplate,
-          },
-          'selected_template_id': _selectedTemplate?.id,
-        },
+      final uploadedCapture = await _ensureSingleCaptureRecorded(
+        capture,
+        showSuccessBanner: false,
       );
 
       final aiTask = _shootMode == _CameraShootMode.background
@@ -1148,7 +1540,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     setState(() {
       _selectedTemplate = template;
       _templateOverlayScene = templateScene;
-      _captureSession = null;
       _overlayScene = _composeOverlayScene();
     });
     _showBanner(
@@ -1173,6 +1564,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
     if (_overlaySettings.showSkeleton) {
       enabled.add('骨架线');
+    }
+    if (_overlaySettings.showTemplateBox && _selectedTemplate != null) {
+      enabled.add('模板框');
     }
     if (_overlaySettings.showTemplate && _selectedTemplate != null) {
       enabled.add('模板线');
@@ -1261,10 +1655,18 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     final dynamicScene =
         _liveOverlayScene ?? _analysisOverlayScene ?? OverlayScene.empty();
     return dynamicScene.copyWith(
+      templateBox: _overlaySettings.showTemplateBox
+          ? (_templateOverlayScene?.templateBox ??
+                const NormalizedRect(left: 0, top: 0, width: 0, height: 0))
+          : const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
       templateSegments: _overlaySettings.showTemplate
           ? (_templateOverlayScene?.templateSegments ??
                 const <OverlaySegment>[])
           : const <OverlaySegment>[],
+      templateHeadBox: _overlaySettings.showTemplateBox
+          ? (_templateOverlayScene?.templateHeadBox ??
+                const NormalizedRect(left: 0, top: 0, width: 0, height: 0))
+          : const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
     );
   }
 
@@ -1684,7 +2086,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return OverlayScene(
       bodyBox: bodyBox,
       skeletonPoints: skeletonPoints,
+      templateBox: const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
       templateSegments: const <OverlaySegment>[],
+      templateHeadBox: const NormalizedRect(
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+      ),
     );
   }
 
@@ -1832,7 +2241,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return OverlayScene(
       bodyBox: bodyBox,
       skeletonPoints: skeletonPoints,
+      templateBox: const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
       templateSegments: const <OverlaySegment>[],
+      templateHeadBox: const NormalizedRect(
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+      ),
     );
   }
 
@@ -1865,7 +2281,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         next.skeletonPoints,
         _livePointSmoothing,
       ),
+      templateBox: next.templateBox,
       templateSegments: next.templateSegments,
+      templateHeadBox: next.templateHeadBox,
     );
   }
 
@@ -3081,17 +3499,41 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                   _clearSelectedTemplate(syncMessage: '已切换为无模板拍摄。');
                 },
               ),
-              ..._templates.map(
-                (template) => _TemplateChip(
-                  label: template.name,
-                  selected: _selectedTemplate?.id == template.id,
-                  onTap: () {
-                    _selectTemplate(template);
-                  },
-                ),
-              ),
             ],
           ),
+        if (!_isLoadingTemplates && _templates.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columnCount = constraints.maxWidth >= 360 ? 3 : 2;
+              final cardWidth = math.max(
+                112.0,
+                (constraints.maxWidth - (columnCount - 1) * 10) / columnCount,
+              );
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: _templates
+                    .map((template) {
+                      final meta = template.templateType.trim();
+                      return SizedBox(
+                        width: cardWidth,
+                        child: _TemplatePreviewCard(
+                          name: template.name,
+                          imageUrl: _templatePreviewImageUrl(template),
+                          meta: meta.isEmpty ? null : meta,
+                          selected: _selectedTemplate?.id == template.id,
+                          onTap: () {
+                            _selectTemplate(template);
+                          },
+                        ),
+                      );
+                    })
+                    .toList(growable: false),
+              );
+            },
+          ),
+        ],
       ],
     );
   }
@@ -3344,6 +3786,20 @@ class _OverlayToggleBar extends StatelessWidget {
               ),
             if (showTemplateToggle)
               _OverlayChip(
+                label: '\u6a21\u677f\u6846',
+                selected: settings.showTemplateBox,
+                color: const Color(0xFFE0A458),
+                compact: compact,
+                onTap: () {
+                  onChanged(
+                    settings.copyWith(
+                      showTemplateBox: !settings.showTemplateBox,
+                    ),
+                  );
+                },
+              ),
+            if (showTemplateToggle)
+              _OverlayChip(
                 label: '\u6a21\u677f\u7ebf',
                 selected: settings.showTemplate,
                 color: const Color(0xFFD4A017),
@@ -3566,6 +4022,138 @@ class _TemplateChip extends StatelessWidget {
         child: Text(
           label,
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplatePreviewCard extends StatelessWidget {
+  const _TemplatePreviewCard({
+    required this.name,
+    required this.selected,
+    required this.onTap,
+    this.imageUrl,
+    this.meta,
+  });
+
+  final String name;
+  final String? imageUrl;
+  final String? meta;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl?.trim();
+    return Tooltip(
+      message: name,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: selected
+                ? const Color(0x3347D7B4)
+                : Colors.white.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFFBDF6EF)
+                  : Colors.white.withValues(alpha: 0.18),
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Stack(
+                children: <Widget>[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(7),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: url == null || url.isEmpty
+                          ? const _TemplatePreviewPlaceholder()
+                          : Image.network(
+                              url,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const _TemplatePreviewPlaceholder(),
+                            ),
+                    ),
+                  ),
+                  if (selected)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0D5C63),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.74),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.check,
+                          size: 15,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12.5,
+                ),
+              ),
+              if (meta != null && meta!.trim().isNotEmpty) ...<Widget>[
+                const SizedBox(height: 2),
+                Text(
+                  meta!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.66),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplatePreviewPlaceholder extends StatelessWidget {
+  const _TemplatePreviewPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.white.withValues(alpha: 0.08),
+      child: Center(
+        child: Icon(
+          Icons.image_outlined,
+          size: 26,
+          color: Colors.white.withValues(alpha: 0.54),
         ),
       ),
     );

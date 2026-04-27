@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import threading
 
 import cv2
 import numpy as np
@@ -185,6 +186,59 @@ class OverlayGestureTest(unittest.TestCase):
         self.assertFalse(settings.show_live_hands)
         self.assertTrue(settings.show_tracking_anchor)
 
+    def test_detection_config_change_rebuilds_running_detector(self) -> None:
+        class FakeDetector:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        session = object.__new__(DeviceSessionContext)
+        session._lock = threading.RLock()
+        session.config = default_config("mobile_push")
+        session.runtime_state = RuntimeState()
+        session.runtime_state.loop_running = True
+        session._async_detector = FakeDetector()
+        session._frame_processor = object()
+        rebuilt = []
+
+        def ensure_detector_pipeline() -> None:
+            rebuilt.append(True)
+            session._async_detector = object()
+            session._frame_processor = object()
+
+        session._ensure_detector_pipeline = ensure_detector_pipeline
+        session.build_status = lambda: {"ok": True}
+
+        result = session.update_runtime_options(
+            detection={"enable_hand_landmarks": not session.config.detection.enable_hand_landmarks}
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(rebuilt, [True])
+        self.assertIsNotNone(session._async_detector)
+        self.assertIsNotNone(session._frame_processor)
+
+    def test_gesture_capture_countdown_status(self) -> None:
+        session = object.__new__(DeviceSessionContext)
+        session._last_gesture_capture_error = "old error"
+        session._last_gesture_capture_result = None
+
+        session._start_gesture_countdown("force_capture", "gesture_ok", 10.0)
+
+        self.assertEqual(session._gesture_countdown_remaining(now=11.0), 2.0)
+        self.assertIsNone(session._last_gesture_capture_error)
+        self.assertEqual(
+            session._last_gesture_capture_result,
+            {
+                "pending": True,
+                "reason": "gesture_ok",
+                "event": "force_capture",
+                "countdown_s": 3.0,
+            },
+        )
+
     def test_performance_profile_keeps_tracking_anchor_lightweight(self) -> None:
         cfg = default_config("mobile_push")
         apply_rpi_profile(cfg, RaspberryPiProfile.performance())
@@ -196,8 +250,8 @@ class OverlayGestureTest(unittest.TestCase):
         self.assertFalse(cfg.detection.enable_face_landmarks)
         self.assertFalse(cfg.detection.enable_hand_landmarks)
         self.assertEqual(cfg.detection.tracking_anchor_mode, "upper_body")
-        self.assertEqual(cfg.app.ui_refresh_fps, 15.0)
-        self.assertEqual(cfg.app.preview_scale, 0.5)
+        self.assertEqual(cfg.app.ui_refresh_fps, 20.0)
+        self.assertEqual(cfg.app.preview_scale, 0.75)
         self.assertFalse(cfg.app.show_body_skeleton)
         self.assertFalse(cfg.app.show_face_mesh)
         self.assertFalse(cfg.app.show_hands)

@@ -203,9 +203,27 @@ export async function listCaptures() {
   return response.data.data.items;
 }
 
+export async function deleteCapture(captureId) {
+  await http.delete(`/admin/captures/${captureId}`);
+}
+
+export async function deleteAllCaptures() {
+  const response = await http.delete("/admin/captures");
+  return response.data.data;
+}
+
 export async function listAiTasks() {
   const response = await http.get("/admin/ai/tasks");
   return response.data.data.items;
+}
+
+export async function deleteAiTask(taskId) {
+  await http.delete(`/admin/ai/tasks/${taskId}`);
+}
+
+export async function deleteAllAiTasks() {
+  const response = await http.delete("/admin/ai/tasks");
+  return response.data.data;
 }
 
 export async function listAiProviderConfigs() {

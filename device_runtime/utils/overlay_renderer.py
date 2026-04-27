@@ -66,8 +66,11 @@ class DeviceOverlayRenderer:
         selected_template: TemplateProfile | None,
         settings: OverlaySettings,
         ai_lock_target_box_norm: tuple[float, float, float, float] | None = None,
+        gesture_countdown_remaining: float | None = None,
     ) -> None:
         if not settings.enabled:
+            if gesture_countdown_remaining is not None:
+                self._draw_gesture_countdown(frame, gesture_countdown_remaining)
             return
         if vision is not None:
             self._draw_live_overlay(frame, vision, settings)
@@ -75,6 +78,8 @@ class DeviceOverlayRenderer:
             self._draw_template_overlay(frame, selected_template, settings)
         if settings.show_ai_lock_box and ai_lock_target_box_norm is not None:
             self._draw_norm_box(frame, ai_lock_target_box_norm, (80, 220, 255), "AI lock")
+        if gesture_countdown_remaining is not None:
+            self._draw_gesture_countdown(frame, gesture_countdown_remaining)
 
     def _draw_live_overlay(
         self,
@@ -203,4 +208,45 @@ class DeviceOverlayRenderer:
             0.5,
             color,
             1,
+        )
+
+    def _draw_gesture_countdown(self, frame: np.ndarray, remaining_s: float) -> None:
+        height, width = frame.shape[:2]
+        countdown = max(1, int(np.ceil(max(0.0, remaining_s))))
+        title = "Gesture capture"
+        number = str(countdown)
+        center_x = width // 2
+        center_y = height // 2
+        overlay = frame.copy()
+        cv2.rectangle(
+            overlay,
+            (max(0, center_x - 150), max(0, center_y - 100)),
+            (min(width - 1, center_x + 150), min(height - 1, center_y + 95)),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.addWeighted(overlay, 0.48, frame, 0.52, 0, frame)
+        title_scale = max(0.55, min(0.9, width / 900.0))
+        number_scale = max(1.8, min(3.8, width / 230.0))
+        title_size, _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, title_scale, 2)
+        number_size, _ = cv2.getTextSize(number, cv2.FONT_HERSHEY_SIMPLEX, number_scale, 5)
+        cv2.putText(
+            frame,
+            title,
+            (center_x - title_size[0] // 2, center_y - 42),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            title_scale,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            number,
+            (center_x - number_size[0] // 2, center_y + 54),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            number_scale,
+            (70, 245, 255),
+            5,
+            cv2.LINE_AA,
         )

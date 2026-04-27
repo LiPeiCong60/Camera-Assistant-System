@@ -90,7 +90,7 @@ def _apply_schema_compatibility_patches(engine: Engine) -> None:
         """
         ALTER TABLE IF EXISTS captures
         ADD CONSTRAINT chk_captures_type CHECK (
-            capture_type IN ('single', 'photo', 'burst', 'best', 'background')
+            capture_type IN ('single', 'photo', 'burst', 'best', 'background', 'device_link')
         )
         """,
         """

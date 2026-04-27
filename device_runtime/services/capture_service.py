@@ -3,6 +3,7 @@
 负责抓拍、保存和AI分析
 """
 
+import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -51,24 +52,40 @@ class CaptureService:
         if isinstance(self._capture_trigger, LocalFileCaptureTrigger):
             capture_path = self._capture_trigger.latest_capture_path()
 
+        if self._runtime_state is not None:
+            self._runtime_state.latest_capture_path = capture_path
+            self._runtime_state.latest_capture_analysis = None
+            self._runtime_state.latest_capture_error = None
+
         analysis = None
         analysis_error = None
         if auto_analyze and self._ai_assistant and capture_path:
-            try:
-                analysis = self._run_ai_analysis(capture_path, context or {})
-            except Exception as exc:
-                analysis_error = str(exc)
-
-        if self._runtime_state is not None:
-            self._runtime_state.latest_capture_path = capture_path
-            self._runtime_state.latest_capture_analysis = analysis
-            self._runtime_state.latest_capture_error = analysis_error
+            self._start_ai_analysis(capture_path, context or {})
 
         return CaptureResult(
             path=capture_path,
             analysis=analysis,
             analysis_error=analysis_error,
         )
+
+    def _start_ai_analysis(self, image_path: str, context: Dict[str, Any]) -> None:
+        def run() -> None:
+            analysis = None
+            analysis_error = None
+            try:
+                analysis = self._run_ai_analysis(image_path, context)
+            except Exception as exc:
+                analysis_error = str(exc)
+
+            if self._runtime_state is not None and self._runtime_state.latest_capture_path == image_path:
+                self._runtime_state.latest_capture_analysis = analysis
+                self._runtime_state.latest_capture_error = analysis_error
+
+        threading.Thread(
+            target=run,
+            name="device-capture-ai-analysis",
+            daemon=True,
+        ).start()
 
     def _run_ai_analysis(self, image_path: str, context: Dict[str, Any]) -> CaptureAnalysis:
         """运行AI分析"""

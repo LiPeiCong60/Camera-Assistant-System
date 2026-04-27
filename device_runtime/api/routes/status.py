@@ -10,11 +10,12 @@ from pydantic import BaseModel
 
 from device_runtime.api.dependencies import require_session
 from device_runtime.api.session_manager import session_manager
+from device_runtime.api.routes.webrtc import get_webrtc_debug_status
 
 router = APIRouter(tags=["device-status"])
 
 def _preview_interval_s(preview_fps: float) -> float:
-    normalized_fps = min(24.0, max(20.0, float(preview_fps)))
+    normalized_fps = min(24.0, max(5.0, float(preview_fps)))
     return 1.0 / normalized_fps
 
 
@@ -39,9 +40,16 @@ class GestureConfigRequest(BaseModel):
     auto_analyze_enabled: bool | None = None
 
 
+class DetectionConfigRequest(BaseModel):
+    enable_pose_landmarks: bool | None = None
+    enable_face_landmarks: bool | None = None
+    enable_hand_landmarks: bool | None = None
+
+
 class DeviceRuntimeConfigRequest(BaseModel):
     overlay: OverlayConfigRequest | None = None
     gesture: GestureConfigRequest | None = None
+    detection: DetectionConfigRequest | None = None
 
 
 def _model_payload(model: BaseModel | None) -> dict:
@@ -72,10 +80,12 @@ def health_check() -> dict:
 @router.get("/api/device/status")
 def get_status() -> dict:
     session = require_session()
+    status = session.build_status()
+    status["webrtc_status"] = get_webrtc_debug_status()
     return {
         "success": True,
         "message": "ok",
-        "data": session.build_status(),
+        "data": status,
     }
 
 
@@ -85,6 +95,7 @@ def update_runtime_config(payload: DeviceRuntimeConfigRequest) -> dict:
     status = session.update_runtime_options(
         overlay=_model_payload(payload.overlay) if payload.overlay is not None else None,
         gesture=_model_payload(payload.gesture) if payload.gesture is not None else None,
+        detection=_model_payload(payload.detection) if payload.detection is not None else None,
     )
     return {
         "success": True,

@@ -53,7 +53,7 @@ from device_runtime.vision.video_source import build_video_source
 class SessionOpenPayload:
     session_code: str
     stream_url: str
-    mirror_view: bool = True
+    mirror_view: bool = False
     start_mode: str = "MANUAL"
 
 
@@ -251,6 +251,8 @@ def _build_servo_driver(config: GimbalConfig) -> ServoDriver:
 class DeviceSessionContext:
     """Realtime device session context used by local API endpoints."""
 
+    GESTURE_CAPTURE_COUNTDOWN_S = 3.0
+
     def __init__(
         self,
         payload: SessionOpenPayload,
@@ -339,6 +341,10 @@ class DeviceSessionContext:
         self._last_gesture_event_at: float | None = None
         self._last_gesture_capture_result: dict[str, Any] | None = None
         self._last_gesture_capture_error: str | None = None
+        self._gesture_countdown_started_at: float | None = None
+        self._gesture_countdown_until: float | None = None
+        self._gesture_countdown_event: str | None = None
+        self._gesture_countdown_reason: str | None = None
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
         self._last_submit_ts = 0.0
         self._stop_event = threading.Event()
@@ -552,6 +558,7 @@ class DeviceSessionContext:
                 "last_capture_result": self._last_gesture_capture_result,
                 "last_capture_error": self._last_gesture_capture_error,
                 "state": self._gesture_state.snapshot(),
+                "capture_countdown": self._gesture_countdown_status(),
             },
         }
 
@@ -560,8 +567,10 @@ class DeviceSessionContext:
         *,
         overlay: dict[str, object] | None = None,
         gesture: dict[str, object] | None = None,
+        detection: dict[str, object] | None = None,
     ) -> dict:
         with self._lock:
+            detector_config_changed = False
             if overlay is not None:
                 self._overlay_settings.update_from_dict(overlay)
             if gesture is not None:
@@ -570,7 +579,30 @@ class DeviceSessionContext:
                     self._gesture_state.reset_pose_capture()
                 if not self._gesture_settings.force_ok_enabled:
                     self._gesture_state.reset()
+            if detection is not None:
+                for key in (
+                    "enable_pose_landmarks",
+                    "enable_face_landmarks",
+                    "enable_hand_landmarks",
+                ):
+                    if key in detection and detection[key] is not None:
+                        value = bool(detection[key])
+                        if getattr(self.config.detection, key) != value:
+                            setattr(self.config.detection, key, value)
+                            detector_config_changed = True
+                if detector_config_changed:
+                    self._reset_detector_pipeline()
+                    if self.runtime_state.loop_running:
+                        self._ensure_detector_pipeline()
             return self.build_status()
+
+    def _reset_detector_pipeline(self) -> None:
+        if self._async_detector is not None:
+            self._async_detector.close()
+        self._async_detector = None
+        self._frame_processor = None
+        self.runtime_state.latest_vision = None
+        self.runtime_state.last_detection_at = None
 
     def _ensure_detector_pipeline(self) -> None:
         if self._async_detector is not None and self._frame_processor is not None:
@@ -597,8 +629,9 @@ class DeviceSessionContext:
             self.runtime_state.last_frame_at = now
 
             if self._async_detector is None or self._frame_processor is None:
-                time.sleep(0.01)
-                continue
+                with self._lock:
+                    if self._async_detector is None or self._frame_processor is None:
+                        self._ensure_detector_pipeline()
 
             if now - self._last_submit_ts >= self._detector_interval_s:
                 self._async_detector.submit(frame)
@@ -764,6 +797,7 @@ class DeviceSessionContext:
             ai_lock_target_box_norm=self.runtime_state.ai_lock_target_box_norm
             if self.runtime_state.ai_lock_mode_enabled
             else None,
+            gesture_countdown_remaining=self._gesture_countdown_remaining(),
         )
         app_config = getattr(getattr(self, "config", None), "app", None)
         preview_scale = getattr(app_config, "preview_scale", 1.0)
@@ -782,6 +816,7 @@ class DeviceSessionContext:
             self._last_hand_count = 0
             self._last_hands_detected = False
             self._gesture_state.reset()
+            self._clear_gesture_countdown()
             return
 
         hands = vision.hand_landmarks or []
@@ -790,6 +825,12 @@ class DeviceSessionContext:
 
         if not self._gesture_settings.capture_enabled and not self._gesture_settings.force_ok_enabled:
             self._gesture_state.reset()
+            self._clear_gesture_countdown()
+            return
+
+        if self._gesture_countdown_until is not None:
+            if now >= self._gesture_countdown_until:
+                self._complete_gesture_countdown()
             return
 
         selected_template = self._selected_template_profile
@@ -813,6 +854,24 @@ class DeviceSessionContext:
         self._last_gesture_event = gesture_event
         self._last_gesture_event_at = now
         reason = "gesture_ok" if gesture_event == "force_capture" else "gesture_open_fist"
+        self._start_gesture_countdown(gesture_event, reason, now)
+
+    def _start_gesture_countdown(self, gesture_event: str, reason: str, now: float) -> None:
+        self._gesture_countdown_started_at = now
+        self._gesture_countdown_until = now + self.GESTURE_CAPTURE_COUNTDOWN_S
+        self._gesture_countdown_event = gesture_event
+        self._gesture_countdown_reason = reason
+        self._last_gesture_capture_error = None
+        self._last_gesture_capture_result = {
+            "pending": True,
+            "reason": reason,
+            "event": gesture_event,
+            "countdown_s": self.GESTURE_CAPTURE_COUNTDOWN_S,
+        }
+
+    def _complete_gesture_countdown(self) -> None:
+        reason = self._gesture_countdown_reason or "gesture_capture"
+        event = self._gesture_countdown_event or "capture"
         try:
             result = self.trigger_capture(
                 reason=reason,
@@ -821,6 +880,8 @@ class DeviceSessionContext:
             self._last_gesture_capture_result = {
                 "path": result.path,
                 "reason": reason,
+                "event": event,
+                "pending": False,
                 "analysis": {
                     "score": getattr(result.analysis, "score", None),
                     "summary": getattr(result.analysis, "summary", None),
@@ -834,6 +895,33 @@ class DeviceSessionContext:
         except Exception as exc:
             self._last_gesture_capture_error = str(exc)
             self._last_gesture_capture_result = None
+        finally:
+            self._clear_gesture_countdown()
+
+    def _clear_gesture_countdown(self) -> None:
+        self._gesture_countdown_started_at = None
+        self._gesture_countdown_until = None
+        self._gesture_countdown_event = None
+        self._gesture_countdown_reason = None
+
+    def _gesture_countdown_remaining(self, now: float | None = None) -> float | None:
+        countdown_until = getattr(self, "_gesture_countdown_until", None)
+        if countdown_until is None:
+            return None
+        remaining = countdown_until - (time.time() if now is None else now)
+        return max(0.0, remaining)
+
+    def _gesture_countdown_status(self) -> dict[str, Any]:
+        remaining = self._gesture_countdown_remaining()
+        return {
+            "active": remaining is not None,
+            "remaining_s": remaining,
+            "duration_s": self.GESTURE_CAPTURE_COUNTDOWN_S,
+            "started_at": getattr(self, "_gesture_countdown_started_at", None),
+            "capture_at": getattr(self, "_gesture_countdown_until", None),
+            "event": getattr(self, "_gesture_countdown_event", None),
+            "reason": getattr(self, "_gesture_countdown_reason", None),
+        }
 
     @staticmethod
     def _mirror_vision(vision: VisionResult, frame_shape: tuple[int, int, int]) -> VisionResult:
@@ -1132,6 +1220,10 @@ class SessionManager:
     def list_templates(self) -> list[TemplateProfile]:
         with self._lock:
             return self.template_service.list_templates()
+
+    def get_template(self, template_id: str | int) -> TemplateProfile | None:
+        with self._lock:
+            return self.template_repository.get(str(template_id))
 
     def import_template(self, image_path: str, name: str | None = None) -> TemplateProfile:
         with self._lock:

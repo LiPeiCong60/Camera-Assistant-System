@@ -1,9 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 
-import { listCaptures } from "../api/admin";
+import { deleteAllCaptures, deleteCapture, listCaptures } from "../api/admin";
 
 const loading = ref(false);
+const clearing = ref(false);
+const deletingCaptureId = ref(null);
 const errorMessage = ref("");
 const captures = ref([]);
 
@@ -43,6 +46,54 @@ async function loadCaptures() {
   }
 }
 
+async function confirmDeleteCapture(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除拍摄记录 #${row.id} 吗？关联的 AI 任务也会一起删除。`, "删除拍摄记录", {
+      type: "warning",
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  deletingCaptureId.value = row.id;
+  errorMessage.value = "";
+  try {
+    await deleteCapture(row.id);
+    ElMessage.success("拍摄记录已删除");
+    await loadCaptures();
+  } catch (error) {
+    errorMessage.value = error.message || "拍摄记录删除失败";
+  } finally {
+    deletingCaptureId.value = null;
+  }
+}
+
+async function confirmClearCaptures() {
+  try {
+    await ElMessageBox.confirm("确定清空所有拍摄记录吗？关联的 AI 任务和拍摄会话也会一起清理。", "清空拍摄记录", {
+      type: "warning",
+      confirmButtonText: "清空",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  clearing.value = true;
+  errorMessage.value = "";
+  try {
+    await deleteAllCaptures();
+    ElMessage.success("拍摄记录已清空");
+    await loadCaptures();
+  } catch (error) {
+    errorMessage.value = error.message || "拍摄记录清空失败";
+  } finally {
+    clearing.value = false;
+  }
+}
+
 onMounted(() => {
   loadCaptures();
 });
@@ -71,6 +122,7 @@ onMounted(() => {
           <h3>拍摄记录</h3>
         </div>
         <div class="panel-actions">
+          <el-button type="danger" plain :loading="clearing" @click="confirmClearCaptures">清空记录</el-button>
           <el-button plain @click="loadCaptures" :loading="loading">刷新记录</el-button>
         </div>
       </div>
@@ -117,6 +169,18 @@ onMounted(() => {
         <el-table-column label="创建时间" min-width="180">
           <template #default="{ row }">
             {{ formatDate(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="110" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              link
+              type="danger"
+              :loading="deletingCaptureId === row.id"
+              @click="confirmDeleteCapture(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

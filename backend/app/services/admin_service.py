@@ -154,15 +154,8 @@ class AdminService:
             ),
         }
         has_related_data = any(count > 0 for count in related_items.values())
-        is_test_user = self._is_deletable_test_user(user)
-        if has_related_data and not is_test_user:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="user has related business data and cannot be deleted",
-            )
-
-        if has_related_data and is_test_user:
-            self._delete_test_user_related_data(user_id)
+        if has_related_data:
+            self._delete_user_related_data(user_id)
 
         self.session.delete(user)
         self.session.commit()
@@ -369,8 +362,37 @@ class AdminService:
     def list_captures(self):
         return self.capture_repo.list_all_captures()
 
+    def delete_capture(self, capture_id: int) -> None:
+        capture = self.capture_repo.get(capture_id)
+        if capture is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="capture not found")
+
+        self.session.execute(delete(AiTask).where(AiTask.capture_id == capture_id))
+        self.session.delete(capture)
+        self.session.commit()
+
+    def delete_all_captures(self) -> int:
+        ai_task_result = self.session.execute(delete(AiTask).where(AiTask.capture_id.is_not(None)))
+        capture_result = self.session.execute(delete(Capture))
+        self.session.execute(delete(CaptureSession))
+        self.session.commit()
+        return int(capture_result.rowcount or 0) + int(ai_task_result.rowcount or 0)
+
     def list_ai_tasks(self):
         return self.ai_task_repo.list_all_tasks()
+
+    def delete_ai_task(self, task_id: int) -> None:
+        ai_task = self.ai_task_repo.get(task_id)
+        if ai_task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ai task not found")
+
+        self.session.delete(ai_task)
+        self.session.commit()
+
+    def delete_all_ai_tasks(self) -> int:
+        result = self.session.execute(delete(AiTask))
+        self.session.commit()
+        return int(result.rowcount or 0)
 
     def list_ai_provider_configs(self) -> list[AiProviderConfig]:
         return self.ai_provider_config_repo.list_all()
@@ -593,10 +615,7 @@ class AdminService:
         normalized = value.strip()
         return normalized or None
 
-    def _is_deletable_test_user(self, user: User) -> bool:
-        return user.role == "user" and user.user_code.startswith(self.TEST_USER_CODE_PREFIXES)
-
-    def _delete_test_user_related_data(self, user_id: int) -> None:
+    def _delete_user_related_data(self, user_id: int) -> None:
         self.session.execute(delete(AiTask).where(AiTask.user_id == user_id))
         self.session.execute(delete(Capture).where(Capture.user_id == user_id))
         self.session.execute(delete(CaptureSession).where(CaptureSession.user_id == user_id))

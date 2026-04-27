@@ -21,6 +21,19 @@ from backend.app.models.capture import Capture
 DEFAULT_TARGET_BOX_NORM: tuple[float, float, float, float] = (0.38, 0.18, 0.24, 0.66)
 
 
+def _normalize_score_100(raw_score: Any) -> float:
+    """Normalize provider scores to the app's 0-100 scale."""
+    try:
+        value = float(raw_score)
+    except (TypeError, ValueError):
+        return 0.0
+    if 0.0 <= value <= 1.0:
+        value *= 100.0
+    elif 1.0 < value <= 10.0:
+        value *= 10.0
+    return max(0.0, min(100.0, value))
+
+
 class AiProviderInvocationError(RuntimeError):
     """Raised when a real provider request cannot be completed."""
 
@@ -226,6 +239,8 @@ class AiProviderService:
         system_prompt = (
             "You are a camera composition assistant. "
             "Respond with valid JSON only, no markdown fences, no extra text. "
+            "All score fields must use a 0-100 scale. Do not use 0-1 or 0-10 scores; "
+            "if you would rate something 8.5/10, return 85. "
             "JSON schema: "
             "{"
             '"task_type": "<string>", '
@@ -266,6 +281,8 @@ class AiProviderService:
         system_prompt = (
             "You are a portrait photo picker. "
             "Respond with valid JSON only, no markdown fences, no extra text. "
+            "The `score` field must use a 0-100 scale. Do not use 0-1 or 0-10 scores; "
+            "if you would rate something 8.5/10, return 85. "
             "JSON schema: "
             "{"
             '"task_type": "batch_pick", '
@@ -280,6 +297,7 @@ class AiProviderService:
                 "text": (
                     "Select the single best portrait photo from this batch. "
                     "Return only JSON. Keep `summary` in Simplified Chinese. "
+                    "`score` must be 0-100, not 0-1 or 0-10. "
                     "Use one of the provided `capture_id` values as `best_capture_id`."
                 ),
             }
@@ -780,10 +798,7 @@ class AiProviderService:
             self._coerce_float(parsed.get("recommended_tilt_delta", 0.0), minimum=-15.0, maximum=15.0),
             2,
         )
-        score = round(
-            self._coerce_float(parsed.get("score", 0.0), minimum=0.0, maximum=100.0),
-            2,
-        )
+        score = round(_normalize_score_100(parsed.get("score", 0.0)), 2)
         summary = str(parsed.get("summary") or "").strip() or self._build_fallback_summary(
             content_text,
             expected_task_type,
@@ -814,7 +829,7 @@ class AiProviderService:
         if not summary:
             raise AiProviderInvocationError("provider JSON summary is empty")
         try:
-            score = round(float(parsed.get("score", 0.0)), 2)
+            score = round(_normalize_score_100(parsed.get("score", 0.0)), 2)
         except (TypeError, ValueError) as exc:
             raise AiProviderInvocationError("provider JSON contains invalid numeric fields") from exc
 

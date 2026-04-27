@@ -18,6 +18,9 @@ class ScoreFormatter {
     if (value <= 1 && value >= 0) {
       return value * 100;
     }
+    if (value > 1 && value <= 10) {
+      return value * 10;
+    }
     return value.clamp(0, 100).toDouble();
   }
 }

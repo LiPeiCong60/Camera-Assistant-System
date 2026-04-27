@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from pydantic import Field
+
 from backend.app.schemas.base import SchemaModel
 
 
@@ -44,7 +46,7 @@ class AnalyzeBackgroundRequest(SchemaModel):
 
 class BatchPickRequest(SchemaModel):
     session_id: int
-    capture_ids: list[int]
+    capture_ids: list[int] = Field(..., min_length=2, max_length=9)
 
 
 class BatchPickResult(SchemaModel):

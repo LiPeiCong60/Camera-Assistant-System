@@ -17,6 +17,13 @@ class GallerySaveService {
     required String fileName,
   }) async {
     final bytes = await _readBytes(source);
+    return saveImageBytes(bytes: bytes, fileName: fileName);
+  }
+
+  Future<String?> saveImageBytes({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
     return _channel.invokeMethod<String>('saveImage', <String, Object>{
       'bytes': bytes,
       'fileName': fileName,

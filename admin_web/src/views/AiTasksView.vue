@@ -1,9 +1,12 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 
-import { listAiTasks } from "../api/admin";
+import { deleteAiTask, deleteAllAiTasks, listAiTasks } from "../api/admin";
 
 const loading = ref(false);
+const clearing = ref(false);
+const deletingTaskId = ref(null);
 const errorMessage = ref("");
 const aiTasks = ref([]);
 const detailVisible = ref(false);
@@ -51,6 +54,54 @@ async function loadAiTasks() {
   }
 }
 
+async function confirmDeleteTask(row) {
+  try {
+    await ElMessageBox.confirm(`确定删除 AI 任务 #${row.id} 吗？`, "删除 AI 任务", {
+      type: "warning",
+      confirmButtonText: "删除",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  deletingTaskId.value = row.id;
+  errorMessage.value = "";
+  try {
+    await deleteAiTask(row.id);
+    ElMessage.success("AI 任务已删除");
+    await loadAiTasks();
+  } catch (error) {
+    errorMessage.value = error.message || "AI 任务删除失败";
+  } finally {
+    deletingTaskId.value = null;
+  }
+}
+
+async function confirmClearTasks() {
+  try {
+    await ElMessageBox.confirm("确定清空所有 AI 任务记录吗？", "清空 AI 任务", {
+      type: "warning",
+      confirmButtonText: "清空",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  clearing.value = true;
+  errorMessage.value = "";
+  try {
+    await deleteAllAiTasks();
+    ElMessage.success("AI 任务已清空");
+    await loadAiTasks();
+  } catch (error) {
+    errorMessage.value = error.message || "AI 任务清空失败";
+  } finally {
+    clearing.value = false;
+  }
+}
+
 onMounted(() => {
   loadAiTasks();
 });
@@ -79,6 +130,7 @@ onMounted(() => {
           <h3>AI 任务记录</h3>
         </div>
         <div class="panel-actions">
+          <el-button type="danger" plain :loading="clearing" @click="confirmClearTasks">清空任务</el-button>
           <el-button plain @click="loadAiTasks" :loading="loading">刷新任务</el-button>
         </div>
       </div>
@@ -121,9 +173,19 @@ onMounted(() => {
             {{ formatDate(row.finished_at || row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">查看详情</el-button>
+            <div class="action-links">
+              <el-button link type="primary" @click="openDetail(row)">查看详情</el-button>
+              <el-button
+                link
+                type="danger"
+                :loading="deletingTaskId === row.id"
+                @click="confirmDeleteTask(row)"
+              >
+                删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -232,6 +294,12 @@ onMounted(() => {
 
 .data-table :deep(.el-table__cell) {
   padding: 14px 0;
+}
+
+.action-links {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .detail-grid {

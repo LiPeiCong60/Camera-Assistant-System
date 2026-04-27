@@ -150,7 +150,7 @@ async function submitUser() {
 async function confirmDelete(user) {
   try {
     await ElMessageBox.confirm(
-      `确定删除用户“${user.display_name}”吗？如果该用户已有拍摄、任务或设备数据，系统会按现有保护规则拦截。`,
+      `确定删除用户“${user.display_name}”吗？该用户的订阅、设备、模板、拍摄记录和 AI 任务会一起删除。`,
       "删除用户",
       {
         type: "warning",

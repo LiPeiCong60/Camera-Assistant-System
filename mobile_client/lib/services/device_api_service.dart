@@ -74,6 +74,7 @@ class DeviceApiService {
     required String baseUrl,
     Map<String, bool>? overlay,
     Map<String, bool>? gesture,
+    Map<String, bool>? detection,
   }) async {
     final body = <String, dynamic>{};
     if (overlay != null) {
@@ -81,6 +82,9 @@ class DeviceApiService {
     }
     if (gesture != null) {
       body['gesture'] = gesture;
+    }
+    if (detection != null) {
+      body['detection'] = detection;
     }
     final data = await _patchJson(baseUrl, '/api/device/config', body);
     return DeviceStatusSummary.fromJson(data);
@@ -90,7 +94,7 @@ class DeviceApiService {
     required String baseUrl,
     required String sessionCode,
     required String streamUrl,
-    bool mirrorView = true,
+    bool mirrorView = false,
     String startMode = 'MANUAL',
   }) async {
     final data =

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/device/session", tags=["device-session"])
 class OpenSessionRequest(BaseModel):
     session_code: str = Field(min_length=1, max_length=64)
     stream_url: str = Field(min_length=1)
-    mirror_view: bool = True
+    mirror_view: bool = False
     start_mode: str = "MANUAL"
 
 

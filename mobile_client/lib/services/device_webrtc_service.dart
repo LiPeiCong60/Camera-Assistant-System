@@ -36,17 +36,22 @@ class DeviceWebRtcService {
   const DeviceWebRtcService();
 
   static const Duration _requestTimeout = Duration(seconds: 12);
-  static const Duration _iceGatheringTimeout = Duration(seconds: 3);
-  static const int _rpiPreferredVideoWidth = 960;
-  static const int _rpiPreferredVideoHeight = 540;
-  static const int _rpiPreferredVideoFrameRate = 24;
-  static const int _rpiMinVideoFrameRate = 20;
+  static const Duration _iceGatheringTimeout = Duration(seconds: 5);
+  static const int _rpiPreferredVideoWidth = 640;
+  static const int _rpiPreferredVideoHeight = 360;
+  static const int _rpiPreferredVideoFrameRate = 15;
+  static const int _rpiMinVideoFrameRate = 12;
 
   Future<DeviceWebRtcSession> start({
     required String baseUrl,
     required CameraLensDirection lensDirection,
     void Function(RTCPeerConnectionState state)? onConnectionState,
+    void Function(String message)? onDebug,
   }) async {
+    void debug(String message) {
+      onDebug?.call(message);
+    }
+
     final remoteRenderer = RTCVideoRenderer();
     await remoteRenderer.initialize();
 
@@ -64,7 +69,13 @@ class DeviceWebRtcService {
         },
       );
       peerConnection.onConnectionState = onConnectionState;
+      peerConnection.onIceConnectionState = (RTCIceConnectionState state) {
+        debug('WebRTC ICE: $state');
+      };
       peerConnection.onTrack = (RTCTrackEvent event) {
+        debug(
+          'WebRTC remote track: ${event.track.kind}, streams=${event.streams.length}',
+        );
         if (event.track.kind != 'video' || event.streams.isEmpty) {
           return;
         }
@@ -103,26 +114,34 @@ class DeviceWebRtcService {
         },
       });
 
-      for (final track in localStream.getVideoTracks()) {
+      final videoTracks = localStream.getVideoTracks();
+      debug('WebRTC local video tracks: ${videoTracks.length}');
+      if (videoTracks.isEmpty) {
+        throw const ApiException('手机摄像头没有生成 WebRTC video track。');
+      }
+      for (final track in videoTracks) {
         await peerConnection.addTrack(track, localStream);
       }
-      await peerConnection.addTransceiver(
-        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
-        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
-      );
 
       final offer = await peerConnection.createOffer(<String, dynamic>{});
       await peerConnection.setLocalDescription(offer);
-      await _waitForIceGathering(peerConnection);
+      await _waitForIceGathering(peerConnection, onDebug: debug);
       final localDescription = await peerConnection.getLocalDescription();
       if (localDescription?.sdp == null || localDescription?.type == null) {
         throw const ApiException('WebRTC offer 创建失败，请重试。');
       }
 
+      debug(
+        'WebRTC offer candidates: ${_candidateCount(localDescription!.sdp)}',
+      );
+
       final answer = await _postOffer(
         baseUrl: baseUrl,
-        sdp: localDescription!.sdp!,
+        sdp: localDescription.sdp!,
         type: localDescription.type!,
+      );
+      debug(
+        'WebRTC answer candidates: ${_candidateCount(answer['sdp'] as String?)}',
       );
       await peerConnection.setRemoteDescription(
         RTCSessionDescription(
@@ -147,7 +166,10 @@ class DeviceWebRtcService {
     }
   }
 
-  Future<void> _waitForIceGathering(RTCPeerConnection peerConnection) async {
+  Future<void> _waitForIceGathering(
+    RTCPeerConnection peerConnection, {
+    void Function(String message)? onDebug,
+  }) async {
     if (peerConnection.iceGatheringState ==
         RTCIceGatheringState.RTCIceGatheringStateComplete) {
       return;
@@ -155,6 +177,7 @@ class DeviceWebRtcService {
 
     final completer = Completer<void>();
     peerConnection.onIceGatheringState = (RTCIceGatheringState state) {
+      onDebug?.call('WebRTC ICE gathering: $state');
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
           !completer.isCompleted) {
         completer.complete();
@@ -166,6 +189,13 @@ class DeviceWebRtcService {
       // Host candidates are usually available quickly on LAN. Continue so the
       // device can still answer when the platform reports gathering slowly.
     }
+  }
+
+  int _candidateCount(String? sdp) {
+    if (sdp == null || sdp.isEmpty) {
+      return 0;
+    }
+    return RegExp(r'^a=candidate:', multiLine: true).allMatches(sdp).length;
   }
 
   Future<Map<String, dynamic>> _postOffer({

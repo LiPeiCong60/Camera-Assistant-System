@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_TARGET_BOX_NORM: tuple[float, float, float, float] = (0.38, 0.18, 0.24, 0.66)
 
 
+def _normalize_score_100(raw_score: Any) -> float:
+    """Normalize model scores to the app's 0-100 scale."""
+    try:
+        value = float(raw_score)
+    except Exception:
+        return 0.0
+    if 0.0 <= value <= 1.0:
+        value *= 100.0
+    elif 1.0 < value <= 10.0:
+        value *= 10.0
+    return max(0.0, min(100.0, value))
+
+
 @dataclass(slots=True)
 class CaptureAnalysis:
     score: float
@@ -235,13 +248,14 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
     def analyze_capture(self, image_path: str, context: dict[str, Any] | None = None) -> CaptureAnalysis:
         prompt = (
             "评估照片，输出严格JSON："
+            "所有分数字段必须是0到100分，不要使用0到1或0到10分；如果你认为是8.5/10，请返回85。"
             '{"score":0-100,"summary":"一句话","subscores":{"composition":0-100,"pose":0-100,"lighting":0-100,"background":0-100},"suggestions":["建议1","建议2"]}'
         )
         image_url = _encode_image_as_data_url(image_path)
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "你是摄影评估助手，只输出JSON。"},
+                {"role": "system", "content": "你是摄影评估助手，只输出JSON。所有分数字段必须使用0到100分，禁止返回8.5这种10分制分数。"},
                 {
                     "role": "user",
                     "content": [
@@ -261,6 +275,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
     ) -> BackgroundAnalysis:
         prompt = (
             "分析背景照片给出拍摄建议，输出严格JSON："
+            "所有分数字段必须是0到100分，不要使用0到1或0到10分；如果你认为是8.5/10，请返回85。"
             '{"score":0-100,"summary":"一句话","placement":"站位建议","camera_angle":"机位建议","lighting":"光线建议",'
             '"recommended_pan_delta":数字,"recommended_tilt_delta":数字,"target_box_norm":[x,y,w,h],"suggestions":["建议1","建议2"]}'
         )
@@ -268,7 +283,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "你是摄影指导，只输出JSON。pan_delta/tilt_delta范围-20到20，target_box_norm各值0到1。"},
+                {"role": "system", "content": "你是摄影指导，只输出JSON。分数必须使用0到100分，禁止返回8.5这种10分制分数。pan_delta/tilt_delta范围-20到20，target_box_norm各值0到1。"},
                 {
                     "role": "user",
                     "content": [
@@ -292,6 +307,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
     ) -> TemplateBackgroundGuidance:
         prompt = (
             "第一张是模板图，第二张是背景图。给出联合拍摄指导，输出严格JSON："
+            "所有分数字段必须是0到100分，不要使用0到1或0到10分；如果你认为是8.5/10，请返回85。"
             '{"reproducibility_score":0-100,"summary":"一句话","feasibility":"高/中/低","placement":"站位建议","camera_angle":"机位建议","pose_tip":"姿势要点","suggestions":["建议1","建议2"]}'
         )
         template_url = _encode_image_as_data_url(template_image_path)
@@ -299,7 +315,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "你是摄影导演，只输出JSON。"},
+                {"role": "system", "content": "你是摄影导演，只输出JSON。所有分数字段必须使用0到100分，禁止返回8.5这种10分制分数。"},
                 {
                     "role": "user",
                     "content": [
@@ -319,6 +335,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         n = len(image_paths)
         prompt = (
             f"以下{n}张候选照片编号1到{n}，选出拍摄效果最佳的一张，输出严格JSON："
+            "所有分数字段必须是0到100分，不要使用0到1或0到10分；如果你认为是8.5/10，请返回85。"
             '{"best_index":编号(1起),  "score":0-100,"summary":"一句话","suggestions":["建议1","建议2"]}'
         )
         content_parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -328,7 +345,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "你是摄影评估助手，只输出JSON。"},
+                {"role": "system", "content": "你是摄影评估助手，只输出JSON。所有分数字段必须使用0到100分，禁止返回8.5这种10分制分数。"},
                 {"role": "user", "content": content_parts},
             ],
             "temperature": 0.1,
@@ -341,6 +358,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         n = len(image_paths)
         prompt = (
             f"以下{n}张不同角度的背景照片编号1到{n}，选出最适合人像拍摄的角度，输出严格JSON："
+            "所有分数字段必须是0到100分，不要使用0到1或0到10分；如果你认为是8.5/10，请返回85。"
             '{"best_index":编号(1起),"score":0-100,"summary":"一句话","placement":"站位建议",'
             '"camera_angle":"机位建议","lighting":"光线建议",'
             '"recommended_pan_delta":数字,"recommended_tilt_delta":数字,'
@@ -353,7 +371,7 @@ class SiliconFlowAIPhotoAssistant(AIPhotoAssistant):
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": "你是摄影指导，只输出JSON。pan/tilt_delta范围-20到20，target_box_norm各值0到1。"},
+                {"role": "system", "content": "你是摄影指导，只输出JSON。分数必须使用0到100分，禁止返回8.5这种10分制分数。pan/tilt_delta范围-20到20，target_box_norm各值0到1。"},
                 {"role": "user", "content": content_parts},
             ],
             "temperature": 0.1,
@@ -523,11 +541,7 @@ def _parse_capture_analysis(text: str) -> CaptureAnalysis:
             summary=text.strip() or "模型未返回结构化评分",
             suggestions=["请重试一次", "检查图片是否清晰", "检查网络连接"],
         )
-    try:
-        score = float(obj.get("score", 0.0))
-    except Exception:
-        score = 0.0
-    score = max(0.0, min(100.0, score))
+    score = _normalize_score_100(obj.get("score", 0.0))
     summary = str(obj.get("summary", ""))
     subs = obj.get("subscores", {})
     subs_text = ""
@@ -565,11 +579,7 @@ def _parse_background_analysis(text: str) -> BackgroundAnalysis:
             recommended_tilt_delta=0.0,
             target_box_norm=DEFAULT_TARGET_BOX_NORM,
         )
-    try:
-        score = float(obj.get("score", 0.0))
-    except Exception:
-        score = 0.0
-    score = max(0.0, min(100.0, score))
+    score = _normalize_score_100(obj.get("score", 0.0))
     summary = str(obj.get("summary", "")).strip() or "背景可优化后再拍摄"
     placement = str(obj.get("placement", "")).strip() or "人物站在画面中心略偏下"
     camera_angle = str(obj.get("camera_angle", "")).strip() or "镜头略低于眼平线"
@@ -616,11 +626,9 @@ def _parse_template_background_guidance(text: str) -> TemplateBackgroundGuidance
             pose_tip="先还原躯干朝向再还原手部细节",
             suggestions=["先试拍一张", "调整人物与背景距离", "按模板先还原大姿态"],
         )
-    try:
-        reproducibility_score = float(obj.get("reproducibility_score", 0.0))
-    except Exception:
-        reproducibility_score = 0.0
-    reproducibility_score = max(0.0, min(100.0, reproducibility_score))
+    reproducibility_score = _normalize_score_100(
+        obj.get("reproducibility_score", 0.0)
+    )
     summary = str(obj.get("summary", "")).strip() or "可根据背景调整后复刻模板"
     feasibility = str(obj.get("feasibility", "")).strip() or "中"
     placement = str(obj.get("placement", "")).strip() or "人物先站在画面主体区域"
@@ -688,11 +696,7 @@ def _parse_batch_pick_result(text: str, n: int) -> BatchPickResult:
     except Exception:
         best_index = 0
     best_index = max(0, min(n - 1, best_index))
-    try:
-        score = float(obj.get("score", 0.0))
-    except Exception:
-        score = 0.0
-    score = max(0.0, min(100.0, score))
+    score = _normalize_score_100(obj.get("score", 0.0))
     summary = str(obj.get("summary", "")).strip() or "已选出最佳照片"
     suggestions_raw = obj.get("suggestions", [])
     suggestions: list[str] = []
@@ -716,11 +720,7 @@ def _parse_batch_background_pick_result(text: str, n: int) -> BatchBackgroundPic
     except Exception:
         best_index = 0
     best_index = max(0, min(n - 1, best_index))
-    try:
-        score = float(obj.get("score", 0.0))
-    except Exception:
-        score = 0.0
-    score = max(0.0, min(100.0, score))
+    score = _normalize_score_100(obj.get("score", 0.0))
     summary = str(obj.get("summary", "")).strip() or "已选出最佳背景角度"
     placement = str(obj.get("placement", "")).strip() or "人物站在画面中心"
     camera_angle = str(obj.get("camera_angle", "")).strip() or "眼平机位"

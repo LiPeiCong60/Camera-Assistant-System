@@ -7,6 +7,7 @@ import secrets
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Tuple
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -24,6 +25,10 @@ class Settings:
     access_token_ttl_seconds: int = 86400
     uploads_dir: str = str(REPO_ROOT / "uploads")
     uploads_url_path: str = "/uploads"
+    cors_origins: Tuple[str, ...] = (
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    )
 
 
 def _resolve_auth_secret(environment: str) -> str:
@@ -38,6 +43,11 @@ def _resolve_auth_secret(environment: str) -> str:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     environment = os.getenv("BACKEND_ENV", "development")
+    cors_origins = tuple(
+        item.strip()
+        for item in os.getenv("BACKEND_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
+        if item.strip()
+    )
     return Settings(
         app_name=os.getenv("BACKEND_APP_NAME", "云影随行 Backend"),
         environment=environment,
@@ -49,4 +59,5 @@ def get_settings() -> Settings:
         access_token_ttl_seconds=int(os.getenv("BACKEND_ACCESS_TOKEN_TTL_SECONDS", "86400")),
         uploads_dir=os.getenv("BACKEND_UPLOADS_DIR", str(REPO_ROOT / "uploads")),
         uploads_url_path=os.getenv("BACKEND_UPLOADS_URL_PATH", "/uploads"),
+        cors_origins=cors_origins,
     )

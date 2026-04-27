@@ -3,30 +3,46 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+enum TemplateRecognitionMode { backend, local }
+
 class TemplatePhotoDraft {
   const TemplatePhotoDraft({
     required this.name,
     required this.filePath,
+    required this.recognitionMode,
   });
 
   final String name;
   final String filePath;
+  final TemplateRecognitionMode recognitionMode;
 }
 
 Future<TemplatePhotoDraft?> showTemplatePhotoDialog(
   BuildContext context, {
   String title = '新增模板',
+  Set<TemplateRecognitionMode> enabledRecognitionModes =
+      const <TemplateRecognitionMode>{
+        TemplateRecognitionMode.backend,
+        TemplateRecognitionMode.local,
+      },
 }) {
   return showDialog<TemplatePhotoDraft>(
     context: context,
-    builder: (context) => _TemplatePhotoDialog(title: title),
+    builder: (context) => _TemplatePhotoDialog(
+      title: title,
+      enabledRecognitionModes: enabledRecognitionModes,
+    ),
   );
 }
 
 class _TemplatePhotoDialog extends StatefulWidget {
-  const _TemplatePhotoDialog({required this.title});
+  const _TemplatePhotoDialog({
+    required this.title,
+    required this.enabledRecognitionModes,
+  });
 
   final String title;
+  final Set<TemplateRecognitionMode> enabledRecognitionModes;
 
   @override
   State<_TemplatePhotoDialog> createState() => _TemplatePhotoDialogState();
@@ -39,11 +55,15 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
 
   String? _selectedImagePath;
   bool _isPickingImage = false;
+  TemplateRecognitionMode _recognitionMode = TemplateRecognitionMode.backend;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
+    if (!widget.enabledRecognitionModes.contains(_recognitionMode)) {
+      _recognitionMode = widget.enabledRecognitionModes.first;
+    }
   }
 
   @override
@@ -122,6 +142,42 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
                 },
               ),
               const SizedBox(height: 14),
+              if (widget.enabledRecognitionModes.length > 1) ...<Widget>[
+                SegmentedButton<TemplateRecognitionMode>(
+                  segments: const <ButtonSegment<TemplateRecognitionMode>>[
+                    ButtonSegment<TemplateRecognitionMode>(
+                      value: TemplateRecognitionMode.backend,
+                      icon: Icon(Icons.cloud_upload_outlined),
+                      label: Text('后端识别'),
+                    ),
+                    ButtonSegment<TemplateRecognitionMode>(
+                      value: TemplateRecognitionMode.local,
+                      icon: Icon(Icons.phone_android_outlined),
+                      label: Text('本地识别'),
+                    ),
+                  ],
+                  selected: <TemplateRecognitionMode>{_recognitionMode},
+                  onSelectionChanged: (selection) {
+                    setState(() {
+                      _recognitionMode = selection.first;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _recognitionMode == TemplateRecognitionMode.backend
+                      ? '默认上传到后端识别，适合稳定保存和后续设备联动。'
+                      : '本地识别会先在手机上提取人体姿态，再保存模板；后端识别不出来时可以试这条路。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
+              ] else ...<Widget>[
+                Text(
+                  '将上传到后端识别人体姿态，并保存为可用于拍摄和设备联动的模板。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
+              ],
               FilledButton.tonalIcon(
                 onPressed: _isPickingImage ? null : _pickImage,
                 icon: _isPickingImage
@@ -135,13 +191,13 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                '上传后会自动识别照片中的人物姿势与位置，并生成可用于拍照页和设备联动页的模板。',
+                '建议选择人物主体清晰、遮挡少、身体尽量完整出现在画面内的照片。',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 14),
               if (previewPath != null)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   child: AspectRatio(
                     aspectRatio: 4 / 5,
                     child: Image.file(
@@ -151,11 +207,9 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
                         return DecoratedBox(
                           decoration: BoxDecoration(
                             color: const Color(0xFFF3EEE3),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Center(
-                            child: Text('照片预览加载失败'),
-                          ),
+                          child: const Center(child: Text('照片预览加载失败')),
                         );
                       },
                     ),
@@ -170,12 +224,10 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
                   ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF6F1E7),
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFE5D8C5)),
                   ),
-                  child: const Text(
-                    '请先选择一张包含人物的照片。\n建议人物主体清晰、无遮挡，并尽量完整出现在画面内。',
-                  ),
+                  child: const Text('请先选择一张包含人物的照片。'),
                 ),
             ],
           ),
@@ -191,16 +243,18 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
             if (!_formKey.currentState!.validate()) {
               return;
             }
-            if (_selectedImagePath == null || _selectedImagePath!.trim().isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('请先选择模板照片')),
-              );
+            if (_selectedImagePath == null ||
+                _selectedImagePath!.trim().isEmpty) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('请先选择模板照片')));
               return;
             }
             Navigator.of(context).pop(
               TemplatePhotoDraft(
                 name: _nameController.text.trim(),
                 filePath: _selectedImagePath!,
+                recognitionMode: _recognitionMode,
               ),
             );
           },

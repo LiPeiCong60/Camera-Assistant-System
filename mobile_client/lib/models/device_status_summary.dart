@@ -189,6 +189,10 @@ class DeviceGestureStatusSummary {
     this.handCount = 0,
     this.lastEvent,
     this.lastCaptureError,
+    this.captureCountdownActive = false,
+    this.captureCountdownRemainingSeconds,
+    this.captureCountdownEvent,
+    this.captureCountdownReason,
   });
 
   final bool captureEnabled;
@@ -199,11 +203,16 @@ class DeviceGestureStatusSummary {
   final int handCount;
   final String? lastEvent;
   final String? lastCaptureError;
+  final bool captureCountdownActive;
+  final double? captureCountdownRemainingSeconds;
+  final String? captureCountdownEvent;
+  final String? captureCountdownReason;
 
   factory DeviceGestureStatusSummary.fromJson(Map<String, dynamic>? json) {
     if (json == null) {
       return const DeviceGestureStatusSummary();
     }
+    final countdown = json['capture_countdown'] as Map<String, dynamic>?;
     return DeviceGestureStatusSummary(
       captureEnabled: json['capture_enabled'] as bool? ?? false,
       forceOkEnabled: json['force_ok_enabled'] as bool? ?? false,
@@ -214,6 +223,11 @@ class DeviceGestureStatusSummary {
       handCount: (json['hand_count'] as num?)?.toInt() ?? 0,
       lastEvent: json['last_event'] as String?,
       lastCaptureError: json['last_capture_error'] as String?,
+      captureCountdownActive: countdown?['active'] as bool? ?? false,
+      captureCountdownRemainingSeconds:
+          (countdown?['remaining_s'] as num?)?.toDouble(),
+      captureCountdownEvent: countdown?['event'] as String?,
+      captureCountdownReason: countdown?['reason'] as String?,
     );
   }
 }

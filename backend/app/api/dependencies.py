@@ -42,9 +42,8 @@ def get_current_user(
 def get_current_admin(
     session: Session = Depends(get_db_session),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    x_admin_code: str | None = Header(default=None, alias="X-Admin-Code"),
 ) -> User:
-    admin_user = _resolve_user_from_auth(session, authorization=authorization, fallback_user_code=x_admin_code)
+    admin_user = _resolve_user_from_auth(session, authorization=authorization, fallback_user_code=None)
     if admin_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="admin user not found")
 

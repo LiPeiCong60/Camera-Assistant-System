@@ -33,8 +33,11 @@ class CameraOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (settings.showTemplateBox) {
+      _paintTemplateBox(canvas, size);
+    }
     if (settings.showTemplate) {
-      _paintTemplate(canvas, size);
+      _paintTemplateLines(canvas, size);
     }
     if (settings.showBodyBox) {
       _paintBodyBox(canvas, size);
@@ -44,8 +47,24 @@ class CameraOverlayPainter extends CustomPainter {
     }
   }
 
-  void _paintTemplate(Canvas canvas, Size size) {
-    final templatePaint = Paint()
+  void _paintTemplateBox(Canvas canvas, Size size) {
+    if (scene.hasTemplateBox) {
+      final boxRect = _rectFromNormalizedRect(scene.templateBox, size);
+      if (boxRect.width > 0 && boxRect.height > 0) {
+        final boxPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.4
+          ..color = const Color(0xFFD4A017);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(boxRect, const Radius.circular(22)),
+          boxPaint,
+        );
+      }
+    }
+  }
+
+  void _paintTemplateLines(Canvas canvas, Size size) {
+    final templateLinePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
       ..color = const Color(0xFFD4A017);
@@ -54,9 +73,36 @@ class CameraOverlayPainter extends CustomPainter {
       canvas.drawLine(
         _offsetFromPoint(segment.start, size),
         _offsetFromPoint(segment.end, size),
-        templatePaint,
+        templateLinePaint,
       );
     }
+
+    if (scene.hasTemplate) {
+      final jointPaint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFE0A458);
+      for (final segment in scene.templateSegments) {
+        canvas.drawCircle(
+          _offsetFromPoint(segment.start, size),
+          3.2,
+          jointPaint,
+        );
+        canvas.drawCircle(_offsetFromPoint(segment.end, size), 3.2, jointPaint);
+      }
+    }
+  }
+
+  Rect _rectFromNormalizedRect(NormalizedRect rect, Size size) {
+    final left = _clamp01(rect.left) * size.width;
+    final top = _clamp01(rect.top) * size.height;
+    final right = _clamp01(rect.left + rect.width) * size.width;
+    final bottom = _clamp01(rect.top + rect.height) * size.height;
+    return Rect.fromLTRB(
+      left < right ? left : right,
+      top < bottom ? top : bottom,
+      right > left ? right : left,
+      bottom > top ? bottom : top,
+    );
   }
 
   void _paintBodyBox(Canvas canvas, Size size) {
