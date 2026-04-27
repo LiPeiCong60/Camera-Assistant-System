@@ -1,16 +1,16 @@
 # admin_web
 
-???? 管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。它只访问业务后端 `backend`，用于运营管理和数据回看，不直接连接 `device_runtime`。
+`admin_web` 是运营管理后台，基于 Vue 3 + Vite + Element Plus + Pinia。它只访问业务后端 `backend`，不直接连接 `device_runtime`。
 
 ## 职责
 
 - 管理员登录。
 - 概览统计。
 - 用户管理和套餐绑定。
-- 套餐管理，包含额度和 AI Provider 绑定。
-- 推荐默认模板管理和图片上传。
+- 套餐管理、额度配置和 AI Provider 绑定。
+- 推荐模板管理和图片上传。
 - 设备登记信息管理。
-- 抓拍记录和 AI 任务回看。
+- 抓拍记录和 AI 任务回看、批量删除。
 - 多 AI Provider 配置管理。
 
 ## 启动
@@ -38,12 +38,12 @@ npm run build
 
 | 目录 | 说明 |
 | --- | --- |
-| `src/views` | 页面视图。 |
-| `src/components` | 侧栏、顶部栏等通用组件。 |
-| `src/api` | Axios 实例和管理端接口封装。 |
-| `src/stores` | Pinia 状态，保存 token、当前用户和 API 地址。 |
-| `src/router` | 前端路由和登录拦截。 |
-| `src/styles` | 全局样式。 |
+| `src/views` | 页面视图 |
+| `src/components` | 侧栏、顶部栏等通用组件 |
+| `src/api` | Axios 实例和管理端接口封装 |
+| `src/stores` | Pinia 状态：token、当前用户、API 地址 |
+| `src/router` | 前端路由和登录拦截 |
+| `src/styles` | 全局样式 |
 
 ## 页面路由
 
@@ -57,11 +57,11 @@ npm run build
 - `/admin/ai-tasks`
 - `/admin/ai-provider`
 
-## 套餐与 AI 配置
+## 套餐和 AI 配置
 
 套餐通过 `feature_flags` 影响后端 AI Provider 选择：
 
 - `default_ai_provider_code`：套餐默认 Provider。
-- `available_ai_provider_codes`：可用 Provider 列表。
+- `available_ai_provider_codes`：套餐可用 Provider 列表。
 
-后端会优先使用套餐默认配置，其次使用可用列表中的第一个可用配置，最后退回系统默认配置或 mock 结果。
+后端优先使用套餐默认配置，其次使用可用列表中的第一个可用配置，最后退回系统默认配置或 mock 结果。

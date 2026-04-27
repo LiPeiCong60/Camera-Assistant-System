@@ -1,114 +1,79 @@
 # AI 照片分析链路说明
 
-本文档说明当前 AI 图片分析的业务链路，以及它和设备端 AI 编排之间的区别。
+项目里有两类 AI 链路：业务后端 AI 和设备端本地 AI。两者用途不同，不应混用。
 
-## 1. 当前能力
+## 业务后端 AI
 
-业务后端支持：
+后端 AI 服务于手机端独立拍摄和历史记录。
 
-- 单张照片分析。
-- 背景分析。
-- 连拍选优。
-- AI 任务落库与查询。
-- 管理后台维护 AI Provider 配置。
-- 套餐通过 `feature_flags` 影响 Provider 选择。
+主要接口：
 
-设备运行时支持：
+- `POST /api/mobile/ai/analyze-photo`
+- `POST /api/mobile/ai/analyze-background`
+- `POST /api/mobile/ai/batch-pick`
+- `GET /api/mobile/ai/tasks/{task_id}`
 
-- 自动找角度。
-- 背景扫描并锁机位。
-- 根据 AI 推荐框计算锁定匹配分数。
-- 设备本地抓拍可选自动分析。
-
-## 2. 手机照片分析流程
+流程：
 
 ```mermaid
 sequenceDiagram
-  participant M as mobile_client
-  participant B as backend
-  participant FS as uploads
+  participant App as mobile_client
+  participant Backend as backend
+  participant Provider as AI Provider
   participant DB as PostgreSQL
-  participant AI as AI Provider
 
-  M->>B: POST /api/mobile/captures/file
-  B->>FS: 保存图片文件
-  B-->>M: file_url/storage_path
-  M->>B: POST /api/mobile/ai/analyze-photo
-  B->>DB: 创建 AI 任务
-  B->>AI: 发送图片和提示词
-  AI-->>B: score/summary/suggestions
-  B->>DB: 更新任务状态和结果
-  B-->>M: AiTask
+  App->>Backend: 上传图片/创建 capture
+  App->>Backend: 请求 AI 分析
+  Backend->>DB: 创建 ai_task
+  Backend->>Provider: 调用 openai_compatible Provider
+  Provider-->>Backend: 返回分析结果
+  Backend->>DB: 更新 ai_task
+  App->>Backend: 查询任务结果
 ```
 
-## 3. 图片上传
+Provider 配置在管理后台维护，移动端不持有 API key。
 
-手机上传图片使用：
+## 设备端本地 AI
 
-```text
-POST /api/mobile/captures/file
-```
+设备端 AI 服务于设备联动现场控制：
 
-multipart 字段名：
+- 角度搜索。
+- 背景锁定。
+- 应用角度建议。
+- 应用锁定建议。
+- 抓拍后设备本地分析。
 
-```text
-file
-```
-
-后端保存到 `uploads/captures/user_{id}/日期/uuid.jpg`，并通过 `/uploads/*` 静态路径访问。
-
-## 4. AI Provider 选择
-
-Provider 配置存在 `ai_provider_configs` 表，管理后台可新增、更新、删除和设置默认配置。
-
-套餐 `feature_flags` 可指定：
-
-- `default_ai_provider_code`
-- `available_ai_provider_codes`
-
-选择顺序：
-
-1. 套餐默认 Provider。
-2. 套餐可用 Provider 列表中的第一个可用配置。
-3. 系统默认 Provider。
-4. 无可用配置时返回 mock 或可解释失败结果。
-
-移动端不会直接持有 API key。
-
-## 5. AI 任务类型
-
-| 任务 | 接口 | 用途 |
-| --- | --- | --- |
-| 照片分析 | `POST /api/mobile/ai/analyze-photo` | 对单张照片评分、总结并给出建议。 |
-| 背景分析 | `POST /api/mobile/ai/analyze-background` | 分析背景或取景建议。 |
-| 连拍选优 | `POST /api/mobile/ai/batch-pick` | 在多张抓拍中选择最佳照片。 |
-| 任务查询 | `GET /api/mobile/ai/tasks/{task_id}` | 查询 AI 任务状态和结果。 |
-
-## 6. 与设备端协同
-
-设备端 AI 不经过 `backend` 的 AI 任务表，它属于本地运行时编排：
+主要接口：
 
 - `POST /api/device/ai/angle-search/start`
 - `POST /api/device/ai/background-lock/start`
 - `POST /api/device/ai/background-lock/unlock`
+- `GET /api/device/ai/status`
 - `POST /api/device/ai/apply-angle`
 - `POST /api/device/ai/apply-lock`
 
-设备端会使用当前实时帧和云台控制能力，扫描多个候选角度或背景，然后应用结果。业务后端 AI 主要处理已经上传的图片和历史记录；设备端 AI 主要服务实时构图和云台控制。
+设备端 AI 状态会显示在设备联动 HUD 中，不写入后端 `ai_tasks`。
 
-## 7. WebRTC 与 AI 的关系
+## 设备抓拍后的 AI 现状
 
-WebRTC 只改变手机和设备之间的视频传输方式，不改变 AI 任务结构：
+当前设备联动页的“设备本地 AI 分析”只设置设备端 `gesture.auto_analyze_enabled` 或触发设备端分析流程。它不会调用后端 `/api/mobile/ai/analyze-photo`，因为设备抓拍不再自动入后端历史。
 
-```text
-手机 video track -> device_runtime -> OpenCV frame -> 检测/构图/AI 编排
-```
+如果未来要让设备抓拍进入后端 AI，应先设计清楚：
 
-业务后端 AI 分析仍走图片上传和任务接口。设备联动页可以把后端或手机得到的角度/锁定建议通过设备端 `/api/device/ai/apply-*` 接口应用到云台。
+1. 设备抓拍文件如何上传到后端。
+2. 是否创建后端 session/capture。
+3. 用户如何选择同步哪些设备抓拍。
+4. 失败时如何重试和提示。
 
-## 8. 当前限制
+## 管理后台 Provider
 
-- 业务后端 AI 任务仍在请求内同步调用 Provider，没有独立队列。
-- 设备端抓拍默认保存在设备本地，不自动写入后端 `captures` 表。
-- 设备端 AI Provider 配置与业务后端 Provider 配置不是同一个配置入口。
-- 真机实时链路依赖局域网质量，WebRTC 失败时应观察 fallback 是否可用。
+管理后台提供 AI Provider 配置页面，后端支持多配置：
+
+- Provider code。
+- API base URL。
+- API key。
+- 模型名。
+- openai compatible 格式。
+- 是否启用。
+
+套餐可通过 `feature_flags` 指定默认 Provider 或可用 Provider 列表。
