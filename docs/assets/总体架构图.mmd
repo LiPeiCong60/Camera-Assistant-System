@@ -1,0 +1,68 @@
+flowchart TB
+    classDef access fill:#fff4db,stroke:#c98a2e,stroke-width:2px,color:#5c3a00;
+    classDef service fill:#fffaf1,stroke:#c98a2e,stroke-width:1.5px,color:#5c3a00;
+    classDef runtime fill:#eef7ff,stroke:#4f8fcb,stroke-width:1.5px,color:#1d4368;
+    classDef store fill:#f4fff5,stroke:#58a56a,stroke-width:1.5px,color:#215b2f;
+    classDef ext fill:#fff4f7,stroke:#cc6f8f,stroke-width:1.5px,color:#7d2745;
+    classDef bridge fill:#fffbe8,stroke:#d2a23c,stroke-width:2px,color:#6a4b00;
+
+    subgraph L1["接入与展示层"]
+        direction LR
+        Mobile["mobile_client<br/>Flutter App<br/>登录 / 拍摄 / 模板 / 历史 / 设备联动"]:::access
+        Admin["admin_web<br/>Vue 管理后台<br/>用户 / 套餐 / 设备 / 模板 / AI 配置"]:::access
+    end
+
+    Bridge["统一通信入口<br/>HTTPS REST / WebSocket / WebRTC(保留能力)"]:::bridge
+
+    subgraph L2["业务服务与实时控制层"]
+        direction LR
+
+        subgraph Backend["backend · FastAPI"]
+            direction LR
+            B1["认证与账户<br/>auth / users / plans"]:::service
+            B2["模板与推荐<br/>templates / recommended_templates"]:::service
+            B3["拍摄历史与 AI 任务<br/>sessions / captures / ai"]:::service
+            B4["管理与配置<br/>devices / statistics / provider-config"]:::service
+        end
+
+        subgraph Runtime["device_runtime · FastAPI"]
+            direction LR
+            R1["会话与推流<br/>session / stream / preview"]:::runtime
+            R2["实时视觉处理<br/>人体检测 / 手势识别 / overlay / tracking"]:::runtime
+            R3["构图与抓拍执行<br/>模板引导 / 倒计时 / capture"]:::runtime
+            R4["设备控制与本地 AI<br/>云台控制 / 背景锁定 / 角度搜索"]:::runtime
+        end
+    end
+
+    subgraph L3["数据与文件存储层"]
+        direction LR
+        DB["PostgreSQL<br/>users / templates / sessions / captures / ai_tasks"]:::store
+        Uploads["uploads/<br/>后端图片与静态资源"]:::store
+        RuntimeCaptures["device_runtime/captures<br/>设备本地抓拍结果"]:::store
+        RuntimeTemplates["device_runtime/templates<br/>设备侧模板缓存"]:::store
+    end
+
+    subgraph L4["设备资源与外部能力层"]
+        direction LR
+        Camera["手机摄像头图像流<br/>NV21 Frame Stream"]:::ext
+        Gimbal["云台与串口设备<br/>TTL / Mock Controller"]:::ext
+        AiProvider["外部 AI Provider<br/>OpenAI / Gemini / OpenAI-Compatible"]:::ext
+    end
+
+    Mobile --> Bridge
+    Admin --> Bridge
+    Bridge --> Backend
+    Bridge --> Runtime
+
+    Mobile -. 业务数据请求 .-> Backend
+    Mobile -. 实时控制与预览 .-> Runtime
+    Admin -. 运维与配置管理 .-> Backend
+
+    Backend --> DB
+    Backend --> Uploads
+    Backend --> AiProvider
+
+    Camera --> Runtime
+    Runtime --> Gimbal
+    Runtime --> RuntimeCaptures
+    Runtime --> RuntimeTemplates

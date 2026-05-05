@@ -278,6 +278,7 @@ class DeviceApiService {
     double tiltStep = 3,
     int maxCandidates = 5,
     double settleSeconds = 0.5,
+    double delaySeconds = 0,
   }) async {
     final data = await _postJson(
       baseUrl,
@@ -289,6 +290,7 @@ class DeviceApiService {
         'tilt_step': tiltStep,
         'max_candidates': maxCandidates,
         'settle_s': settleSeconds,
+        'delay_s': delaySeconds,
       },
     );
     return DeviceAiStatusSummary.fromJson(data);

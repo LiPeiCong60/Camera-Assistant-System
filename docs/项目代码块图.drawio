@@ -1,0 +1,491 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-04-28T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="01 总体架构块图" name="01 总体架构块图">
+  <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="云影随行项目总体块图（少交叉版）" style="text;html=1;strokeColor=none;fillColor=none;fontFamily=Microsoft YaHei;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="430" y="20" width="640" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane1" value="业务数据链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="100" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane2" value="设备联动链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="290" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane3" value="管理与配置链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="480" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane4" value="本地与外部资源" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="670" width="1420" height="150" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_app" value="Flutter App&lt;br&gt;MobileApiService" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="150" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_backend_api" value="Backend API&lt;br&gt;/api/mobile" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="150" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_e1" value="HTTP JSON/Multipart" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="biz_app" target="biz_backend_api">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_mobile_service" value="MobileService&lt;br&gt;模板/会话/抓拍/历史/AI" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="150" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_e2" value="调用服务层" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="biz_backend_api" target="biz_mobile_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_repo" value="Repository + Model&lt;br&gt;业务数据访问" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="150" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_e3" value="SQLAlchemy" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="biz_mobile_service" target="biz_repo">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_db" value="PostgreSQL&lt;br&gt;DATABASE_URL" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="150" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="biz_e4" value="读写数据" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="biz_repo" target="biz_db">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_app" value="Flutter App&lt;br&gt;DeviceApiService&lt;br&gt;DeviceWebRtcService" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_device_api" value="Device Runtime API&lt;br&gt;/api/device" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_e1" value="HTTP/WS/WebRTC" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="dev_app" target="dev_device_api">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_session" value="SessionManager&lt;br&gt;DeviceSessionContext" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_e2" value="打开/获取会话" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="dev_device_api" target="dev_session">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_pipeline" value="实时视觉 Pipeline&lt;br&gt;VideoSource/Detector/FrameProcessor" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_e3" value="启动实时处理" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="dev_session" target="dev_pipeline">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_services" value="Control/Capture/Template&lt;br&gt;AIOrchestrator" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_e4" value="控制/抓拍/模板/AI" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="dev_pipeline" target="dev_services">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_gimbal" value="云台/本地抓拍&lt;br&gt;Gimbal + captures" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.8;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="340" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="dev_e5" value="硬件与文件" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="dev_services" target="dev_gimbal">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_web" value="Vue Admin Web&lt;br&gt;admin_web" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="530" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_api" value="Backend API&lt;br&gt;/api/admin" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="530" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_e1" value="HTTP" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="admin_web" target="admin_api">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_admin_service" value="AdminService&lt;br&gt;用户/套餐/模板/设备/统计" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="530" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_e2" value="管理接口" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="admin_api" target="admin_admin_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_provider_cfg" value="AI Provider Config&lt;br&gt;AiProviderConfig" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="530" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_e3" value="维护 AI 配置" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="admin_admin_service" target="admin_provider_cfg">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_db" value="PostgreSQL&lt;br&gt;配置与业务表" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="530" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="admin_e4" value="持久化" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="admin_provider_cfg" target="admin_db">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_uploads" value="uploads/&lt;br&gt;后端静态文件" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="720" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_cache" value="MobileCacheService&lt;br&gt;手机本地缓存" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="720" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_e1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="res_uploads" target="res_cache">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_templates" value="device_runtime/templates&lt;br&gt;本地模板库" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="720" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_e2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="res_cache" target="res_templates">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_ai" value="OpenAI-compatible&lt;br&gt;AI Provider" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.8;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="720" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_e3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="res_templates" target="res_ai">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_hardware" value="TTLBusSerialDriver&lt;br&gt;或 MockServoDriver" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.8;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="720" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="res_e4" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="res_ai" target="res_hardware">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="x1" value="上传图片" style="endArrow=block;html=1;rounded=0;curved=0;dashed=1;dashPattern=3 3;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.4;" edge="1" parent="1" source="biz_mobile_service" target="res_uploads">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="640" y="250"/>
+          <mxPoint x="160" y="250"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="x2" value="后端 AI" style="endArrow=block;html=1;rounded=0;curved=0;dashed=1;dashPattern=3 3;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.4;" edge="1" parent="1" source="biz_mobile_service" target="res_ai">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="640" y="250"/>
+          <mxPoint x="880" y="250"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="x3" value="设备端 AI" style="endArrow=block;html=1;rounded=0;curved=0;dashed=1;dashPattern=3 3;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.4;" edge="1" parent="1" source="dev_services" target="res_ai">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1120" y="445"/>
+          <mxPoint x="880" y="445"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+    <mxCell id="x4" value="云台驱动" style="endArrow=block;html=1;rounded=0;curved=0;dashed=1;dashPattern=3 3;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.4;" edge="1" parent="1" source="dev_services" target="res_hardware">
+      <mxGeometry relative="1" as="geometry">
+        <Array as="points">
+          <mxPoint x="1120" y="445"/>
+          <mxPoint x="1120" y="735"/>
+        </Array>
+      </mxGeometry>
+    </mxCell>
+  </root>
+  </mxGraphModel>
+  </diagram>
+  <diagram id="02 Device Runtime 内部块图" name="02 Device Runtime 内部块图">
+  <mxGraphModel dx="1600" dy="1050" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1050" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="Device Runtime 内部块图（无交叉泳道版）" style="text;html=1;strokeColor=none;fillColor=none;fontFamily=Microsoft YaHei;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="450" y="20" width="700" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="note" value="画法说明：每一行是一条代码链路，避免跨行连线。DeviceSessionContext 在代码中创建并持有这些对象，图中用块内文字说明，不再用多条交叉依赖线表示。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontFamily=Microsoft YaHei;fontSize=12;align=left;verticalAlign=top;" vertex="1" parent="1">
+      <mxGeometry x="70" y="72" width="1120" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_session" value="会话生命周期链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="125" width="1520" height="135" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_stream" value="推流 / 检测 / 预览链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="300" width="1520" height="135" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_control" value="模式 / 跟随 / 云台控制链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="475" width="1520" height="135" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_feature" value="模板 / 抓拍 / 设备 AI 功能链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="650" width="1520" height="170" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_state" value="共享状态与配置" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="855" width="1520" height="125" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_api" value="session.py&lt;br&gt;/api/device/session&lt;br&gt;open / close" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="170" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_manager" value="SessionManager&lt;br&gt;单会话管理" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="170" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_e1" value="打开/关闭" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="s_api" target="s_manager">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_ctx" value="DeviceSessionContext&lt;br&gt;启动线程&lt;br&gt;组合运行对象" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="170" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_e2" value="创建上下文" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="s_manager" target="s_ctx">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_loop" value="frame_thread&lt;br&gt;start / close&lt;br&gt;restart_stream" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="170" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_e3" value="启动/停止" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="s_ctx" target="s_loop">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_state" value="RuntimeState&lt;br&gt;loop_running&lt;br&gt;latest_frame" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="170" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="s_e4" value="更新状态" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="s_loop" target="s_state">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_api" value="stream.py / webrtc.py&lt;br&gt;mobile-ws / frame&lt;br&gt;offer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_source" value="VideoSource&lt;br&gt;MobilePushVideoSource&lt;br&gt;OpenCVVideoSource" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_e1" value="手机画面/流地址" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="p_api" target="p_source">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_detector" value="VisionDetector&lt;br&gt;MediaPipe / YOLO / HOG&lt;br&gt;AsyncDetector" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_e2" value="读取帧" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="p_source" target="p_detector">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_processor" value="FrameProcessor&lt;br&gt;可靠检测&lt;br&gt;模板评估&lt;br&gt;跟随命令" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_e3" value="VisionResult" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="p_detector" target="p_processor">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_overlay" value="DeviceOverlayRenderer&lt;br&gt;overlay / HUD" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_e4" value="绘制预览" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="p_processor" target="p_overlay">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_preview" value="status.py&lt;br&gt;preview.jpg&lt;br&gt;preview-ws" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="345" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="p_e5" value="输出预览" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="p_overlay" target="p_preview">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_api" value="control.py&lt;br&gt;manual-move&lt;br&gt;mode / home&lt;br&gt;follow-mode" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_service" value="ControlService&lt;br&gt;模式/速度/手动移动" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_e1" value="控制请求" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="c_api" target="c_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_mode" value="ModeManager&lt;br&gt;MANUAL&lt;br&gt;AUTO_TRACK&lt;br&gt;SMART_COMPOSE" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_e2" value="切换模式" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="c_service" target="c_mode">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_tracking" value="TrackingController&lt;br&gt;compute_command" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_e3" value="跟随计算" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="c_mode" target="c_tracking">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_gimbal" value="GimbalController&lt;br&gt;set_absolute&lt;br&gt;move_relative" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_e4" value="pan/tilt命令" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="c_tracking" target="c_gimbal">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_driver" value="ServoDriver&lt;br&gt;TTLBusSerialDriver&lt;br&gt;MockServoDriver" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.8;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="520" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="c_e5" value="驱动云台" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="c_gimbal" target="c_driver">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_api" value="templates.py&lt;br&gt;capture.py&lt;br&gt;ai.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_template" value="TemplateService&lt;br&gt;LocalTemplateRepository&lt;br&gt;TemplateComposeEngine" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_e1" value="功能接口" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="f_api" target="f_template">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_capture" value="CaptureService&lt;br&gt;LocalFileCaptureTrigger" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_e2" value="模板选择/导入" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="f_template" target="f_capture">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_ai" value="AIOrchestrator&lt;br&gt;angle-search&lt;br&gt;background-lock" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_e3" value="抓拍保存" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="f_capture" target="f_ai">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_assistant" value="AIPhotoAssistant&lt;br&gt;build_ai_assistant_from_env" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_e4" value="批量候选分析" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="f_ai" target="f_assistant">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_storage" value="captures/&lt;br&gt;本地模板库&lt;br&gt;AI结果状态" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="700" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="f_e5" value="保存/回写" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="f_assistant" target="f_storage">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_config" value="config.py&lt;br&gt;SystemConfig&lt;br&gt;RaspberryPiProfile&lt;br&gt;环境变量覆盖" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="900" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_runtime" value="RuntimeState&lt;br&gt;检测/抓拍/AI锁&lt;br&gt;最新错误/时间戳" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="900" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_e1" value="配置进入运行对象" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="st_config" target="st_runtime">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_common" value="common_types.py&lt;br&gt;VisionResult&lt;br&gt;DetectionResult&lt;br&gt;BBox / Point" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="900" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_e2" value="共享数据结构" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="st_runtime" target="st_common">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_overlay" value="overlay_renderer.py&lt;br&gt;OverlaySettings" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="900" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="st_e3" value="渲染设置" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="st_common" target="st_overlay">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+  </root>
+  </mxGraphModel>
+  </diagram>
+  <diagram id="03 Backend 内部块图" name="03 Backend 内部块图">
+  <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+    <mxCell id="title" value="Backend 内部块图（少交叉版）" style="text;html=1;strokeColor=none;fillColor=none;fontFamily=Microsoft YaHei;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="430" y="20" width="650" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_mobile" value="移动端业务接口链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="115" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_admin" value="管理端接口链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="310" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_ai" value="AI Provider 调用链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="505" width="1420" height="155" as="geometry"/>
+    </mxCell>
+    <mxCell id="lane_core" value="核心配置 / 文件 / 数据" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#999999;strokeWidth=1;dashed=1;dashPattern=3 3;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;" vertex="1" parent="1">
+      <mxGeometry x="40" y="700" width="1420" height="125" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_entry" value="app/main.py&lt;br&gt;FastAPI + CORS" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_router" value="api/router.py&lt;br&gt;/api" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_e1" value="include_router" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bm_entry" target="bm_router">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_mobile" value="routes/mobile.py&lt;br&gt;/mobile/..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_e2" value="include mobile" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bm_router" target="bm_mobile">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_service" value="MobileService&lt;br&gt;模板/会话/抓拍/历史/AI" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_e3" value="调用服务" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bm_mobile" target="bm_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_repo" value="Repositories&lt;br&gt;业务查询" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_e4" value="读写模型" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bm_service" target="bm_repo">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_db" value="PostgreSQL" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="165" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bm_e5" value="持久化" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bm_repo" target="bm_db">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_web" value="admin_web&lt;br&gt;Vue + Element Plus" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_admin" value="routes/admin.py&lt;br&gt;/admin/..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_e1" value="HTTP" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="ba_web" target="ba_admin">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_service" value="AdminService&lt;br&gt;用户/套餐/模板&lt;br&gt;设备/抓拍/统计" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_e2" value="管理接口" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="ba_admin" target="ba_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_repo" value="Repositories&lt;br&gt;后台查询" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_e3" value="读写数据" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="ba_service" target="ba_repo">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_model" value="Models&lt;br&gt;User/Plan/Device&lt;br&gt;Capture/AiTask" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_e4" value="ORM模型" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="ba_repo" target="ba_model">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_db" value="PostgreSQL" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1270" y="360" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="ba_e5" value="持久化" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="ba_model" target="ba_db">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_mobile" value="MobileService&lt;br&gt;create_*_ai_task" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="555" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_config" value="AiProviderConfig&lt;br&gt;数据库配置" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="555" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_e1" value="选择配置" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bi_mobile" target="bi_config">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_service" value="AiProviderService&lt;br&gt;openai_compatible" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="555" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_e2" value="创建调用器" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bi_config" target="bi_service">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_httpx" value="httpx.Client&lt;br&gt;/v1/chat/completions" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="555" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_e3" value="HTTP请求" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bi_service" target="bi_httpx">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_provider" value="外部 AI Provider&lt;br&gt;LongCat / Ollama / 其他" style="rounded=1;whiteSpace=wrap;html=1;arcSize=10;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.8;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="555" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bi_e4" value="返回结构化JSON" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bi_httpx" target="bi_provider">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_auth" value="core/auth.py&lt;br&gt;JWT / 当前用户" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="70" y="745" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_settings" value="core/config.py&lt;br&gt;DATABASE_URL&lt;br&gt;BACKEND_UPLOADS_DIR" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="310" y="745" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_e1" value="配置读取" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bc_auth" target="bc_settings">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_uploads" value="uploads/&lt;br&gt;StaticFiles /uploads" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="550" y="745" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_e2" value="静态文件" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bc_settings" target="bc_uploads">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_schemas" value="schemas/*&lt;br&gt;Pydantic 请求/响应" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="790" y="745" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_e3" value="请求响应模型" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bc_uploads" target="bc_schemas">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_errors" value="core/errors.py&lt;br&gt;统一异常处理" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;strokeWidth=1.6;fontFamily=Microsoft YaHei;fontSize=13;align=center;verticalAlign=middle;" vertex="1" parent="1">
+      <mxGeometry x="1030" y="745" width="180" height="68" as="geometry"/>
+    </mxCell>
+    <mxCell id="bc_e4" value="错误返回" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=1.6;" edge="1" parent="1" source="bc_schemas" target="bc_errors">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+  </root>
+  </mxGraphModel>
+  </diagram>
+</mxfile>

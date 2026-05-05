@@ -75,6 +75,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 66);
   static const Duration _manualMoveRepeatInterval = Duration(milliseconds: 110);
   static const Duration _mobilePushSocketTimeout = Duration(seconds: 8);
+  static const Duration _defaultPollInterval = Duration(seconds: 3);
+  static const Duration _countdownPollInterval = Duration(seconds: 1);
   static const List<String> _modes = <String>[
     'MANUAL',
     'AUTO_TRACK',
@@ -122,6 +124,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   CaptureSessionSummary? _deviceHistorySession;
   DateTime? _lastStatusUpdatedAt;
   Timer? _pollTimer;
+  Duration _pollInterval = _defaultPollInterval;
   Timer? _persistTimer;
   Timer? _manualMoveRepeatTimer;
   Timer? _hudMessageTimer;
@@ -1013,6 +1016,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       baseUrl: _baseUrlController.text,
       sessionCode: _sessionCodeController.text.trim(),
       streamUrl: _mobilePushStreamUrl,
+      mirrorView: _mobilePushRequiresMirrorCorrection(camera.lensDirection),
     );
     final session = await _deviceWebRtcService.start(
       baseUrl: _baseUrlController.text,
@@ -1072,6 +1076,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       baseUrl: _baseUrlController.text,
       sessionCode: _sessionCodeController.text.trim(),
       streamUrl: _mobilePushStreamUrl,
+      mirrorView: _mobilePushRequiresMirrorCorrection(camera.lensDirection),
     );
     setState(() {
       _status = status;
@@ -1123,6 +1128,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
     }
     return null;
+  }
+
+  bool _mobilePushRequiresMirrorCorrection(CameraLensDirection direction) {
+    return direction == CameraLensDirection.front;
   }
 
   String _mobilePushLensLabel([CameraLensDirection? direction]) {
@@ -1220,38 +1229,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           return;
         }
 
-        _isPushingMobileFrame = true;
-        final currentController = _mobilePushCameraController;
-        _mobilePushCameraController = null;
-        if (currentController != null) {
-          if (currentController.value.isStreamingImages) {
-            await currentController.stopImageStream();
-          }
-          await currentController.dispose();
-        }
-
-        final nextController = CameraController(
-          selectedCamera,
-          ResolutionPreset.low,
-          enableAudio: false,
-          imageFormatGroup: ImageFormatGroup.nv21,
-        );
-        await nextController.initialize();
-        if (!_isMobilePushEnabled) {
-          await nextController.dispose();
-          return;
-        }
-
-        _mobilePushCameraController = nextController;
-        _mobilePushCamera = selectedCamera;
         _mobilePushLensDirection = selectedCamera.lensDirection;
-        _mobilePushRotationDegrees = -1;
-        _mobilePushConfigSent = false;
-        _lastMobilePushFrameSentAtMs = 0;
-        _lastMobilePushUiUpdateAtMs = 0;
-        _latestPreviewFrameBytes = null;
-        await nextController.startImageStream(_handleMobilePushFrame);
-        unawaited(_startPreviewStream());
+        await _stopMobilePush(silent: true);
+        await _startLegacyMobilePush();
       } catch (_) {
         if (_isMobilePushEnabled && _mobilePushCameraController == null) {
           await _stopMobilePush(silent: true);
@@ -2001,7 +1981,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     }
     final config = await _showAiScanConfigDialog(
       title: 'AI 自动找角度',
-      includeDelay: false,
+      includeDelay: true,
     );
     if (!mounted || config == null) {
       return;
@@ -2022,6 +2002,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         tiltStep: config.tiltStep,
         maxCandidates: config.maxCandidates,
         settleSeconds: config.settleSeconds,
+        delaySeconds: config.delaySeconds,
       );
       await _refreshStatusSilently();
     }, successMessage: 'AI 自动找角度已启动。');
@@ -2778,6 +2759,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _deviceTemplates,
       );
     });
+    _syncPollingInterval(status);
     unawaited(_syncDeviceCaptureFiles());
     if (status.sessionOpened) {
       unawaited(_startPreviewStream());
@@ -2796,12 +2778,29 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     });
   }
 
+  Duration _resolvePollInterval(DeviceStatusSummary? status) {
+    final hasCountdown =
+        status?.gestureStatus.captureCountdownActive == true ||
+        status?.aiStatus.countdown.active == true;
+    return hasCountdown ? _countdownPollInterval : _defaultPollInterval;
+  }
+
+  void _syncPollingInterval(DeviceStatusSummary? status) {
+    final nextInterval = _resolvePollInterval(status);
+    if (_pollInterval == nextInterval) {
+      return;
+    }
+    _pollInterval = nextInterval;
+    _restartPolling();
+  }
+
   void _restartPolling() {
     _pollTimer?.cancel();
     if (!_autoRefreshEnabled) {
       return;
     }
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+    _pollInterval = _resolvePollInterval(_status);
+    _pollTimer = Timer.periodic(_pollInterval, (_) async {
       if (!mounted || _isBusy) {
         return;
       }
@@ -4835,6 +4834,15 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Widget _buildHudAiPanel(BuildContext context) {
     final aiStatus = _status?.aiStatus ?? const DeviceAiStatusSummary();
     final isRunning = aiStatus.hasRunningTask;
+    final aiCountdown = aiStatus.countdown;
+    final aiCountdownRemaining = aiCountdown.remainingSeconds;
+    final aiCountdownLabel = aiCountdownRemaining == null
+        ? null
+        : math.max(1, aiCountdownRemaining.ceil());
+    final isAngleCountdown =
+        aiCountdown.active &&
+        aiCountdown.task == 'angle_search' &&
+        aiCountdownLabel != null;
     final lastError =
         aiStatus.lastAngleSearchError ?? aiStatus.lastBackgroundLockError;
     return Column(
@@ -4877,6 +4885,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         const SizedBox(height: 12),
         _buildHudGestureOptions(context),
         _buildHudAiResultButton(context),
+        if (isAngleCountdown) ...<Widget>[
+          const SizedBox(height: 12),
+          _TaskCountdownBanner(
+            countdown: aiCountdownLabel,
+            message: 'AI 自动找角度倒计时中，准备开始扫描',
+          ),
+        ],
         if (isRunning) ...<Widget>[
           const SizedBox(height: 12),
           LinearProgressIndicator(
@@ -4996,8 +5011,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final canUpdate = _status?.sessionOpened == true && !_isBusy;
     final recentCaptures = _captureRecords.take(4).toList(growable: false);
     final countdownRemaining = gesture.captureCountdownRemainingSeconds;
-    final countdownLabel =
-        countdownRemaining == null ? null : math.max(1, countdownRemaining.ceil());
+    final countdownLabel = countdownRemaining == null
+        ? null
+        : math.max(1, countdownRemaining.ceil());
 
     Widget option({
       required IconData icon,
@@ -5053,7 +5069,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
             ),
           ],
         ),
-        if (gesture.captureCountdownActive && countdownLabel != null) ...<Widget>[
+        if (gesture.captureCountdownActive &&
+            countdownLabel != null) ...<Widget>[
           const SizedBox(height: 10),
           _GestureCountdownBanner(countdown: countdownLabel),
         ],
@@ -6145,6 +6162,59 @@ class _GestureCountdownBanner extends StatelessWidget {
           Expanded(
             child: Text(
               '手势已识别，准备抓拍',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.95),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskCountdownBanner extends StatelessWidget {
+  const _TaskCountdownBanner({required this.countdown, required this.message});
+
+  final int countdown;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xCC10181C),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFBDF6EF), width: 1.2),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 44,
+            height: 44,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFFBDF6EF),
+            ),
+            child: Text(
+              '$countdown',
+              style: const TextStyle(
+                color: Color(0xFF0D3F43),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

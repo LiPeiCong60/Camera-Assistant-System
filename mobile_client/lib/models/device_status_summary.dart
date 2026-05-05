@@ -224,8 +224,8 @@ class DeviceGestureStatusSummary {
       lastEvent: json['last_event'] as String?,
       lastCaptureError: json['last_capture_error'] as String?,
       captureCountdownActive: countdown?['active'] as bool? ?? false,
-      captureCountdownRemainingSeconds:
-          (countdown?['remaining_s'] as num?)?.toDouble(),
+      captureCountdownRemainingSeconds: (countdown?['remaining_s'] as num?)
+          ?.toDouble(),
       captureCountdownEvent: countdown?['event'] as String?,
       captureCountdownReason: countdown?['reason'] as String?,
     );
@@ -351,6 +351,7 @@ class DeviceAiStatusSummary {
     this.lastAngleSearchError,
     this.lastBackgroundLockResult,
     this.lastBackgroundLockError,
+    this.countdown = const DeviceAiCountdownSummary(),
   });
 
   final bool angleSearchRunning;
@@ -362,8 +363,10 @@ class DeviceAiStatusSummary {
   final String? lastAngleSearchError;
   final Map<String, dynamic>? lastBackgroundLockResult;
   final String? lastBackgroundLockError;
+  final DeviceAiCountdownSummary countdown;
 
-  bool get hasRunningTask => angleSearchRunning || backgroundLockRunning;
+  bool get hasRunningTask =>
+      angleSearchRunning || backgroundLockRunning || countdown.active;
 
   factory DeviceAiStatusSummary.fromJson(Map<String, dynamic>? json) {
     if (json == null) {
@@ -397,6 +400,35 @@ class DeviceAiStatusSummary {
       lastBackgroundLockResult:
           json['last_background_lock_result'] as Map<String, dynamic>?,
       lastBackgroundLockError: json['last_background_lock_error'] as String?,
+      countdown: DeviceAiCountdownSummary.fromJson(
+        json['countdown'] as Map<String, dynamic>?,
+      ),
+    );
+  }
+}
+
+class DeviceAiCountdownSummary {
+  const DeviceAiCountdownSummary({
+    this.active = false,
+    this.remainingSeconds,
+    this.durationSeconds,
+    this.task,
+  });
+
+  final bool active;
+  final double? remainingSeconds;
+  final double? durationSeconds;
+  final String? task;
+
+  factory DeviceAiCountdownSummary.fromJson(Map<String, dynamic>? json) {
+    if (json == null) {
+      return const DeviceAiCountdownSummary();
+    }
+    return DeviceAiCountdownSummary(
+      active: json['active'] as bool? ?? false,
+      remainingSeconds: (json['remaining_s'] as num?)?.toDouble(),
+      durationSeconds: (json['duration_s'] as num?)?.toDouble(),
+      task: json['task'] as String?,
     );
   }
 }

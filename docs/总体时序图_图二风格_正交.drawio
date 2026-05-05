@@ -1,0 +1,231 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/27.0.9 Chrome/134.0.6998.205 Electron/35.4.0 Safari/537.36" version="27.0.9">
+  <diagram id="sequence_demo_orthogonal" name="总体时序图_图二风格">
+    <mxGraphModel dx="1615" dy="1127" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="start" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" parent="1" vertex="1">
+          <mxGeometry x="28" y="278" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="user" value="用户进入&lt;br&gt;系统" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="76" y="256" width="118" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="app" value="手机 App" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="236" y="256" width="118" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="choose" value="选择功能?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="396" y="244" width="112" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="panel" value="总体链路时序演示" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#f4f4f4;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=15;fontStyle=1;align=center;verticalAlign=top;spacingTop=8;" parent="1" vertex="1">
+          <mxGeometry x="608" y="40" width="772" height="540" as="geometry" />
+        </mxCell>
+        <mxCell id="sep1" value="" style="endArrow=none;html=1;rounded=0;dashed=1;dashPattern=1 4;strokeColor=#111111;strokeWidth=2;entryX=1.012;entryY=0.239;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="606" y="172" as="sourcePoint" />
+            <mxPoint x="1387.2640000000001" y="169.06000000000006" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="sep2" value="" style="endArrow=none;html=1;rounded=0;dashed=1;dashPattern=1 4;strokeColor=#111111;strokeWidth=2;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" edge="1" target="panel">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="610" y="310" as="sourcePoint" />
+            <mxPoint x="1305" y="304" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="sep3" value="" style="endArrow=none;html=1;rounded=0;dashed=1;dashPattern=1 4;strokeColor=#111111;strokeWidth=2;" parent="1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="607" y="436" as="sourcePoint" />
+            <mxPoint x="1380" y="436" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lane_mobile" value="手机独立拍摄" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="596" y="58" width="120" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_device" value="设备联动" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="596" y="190" width="120" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_ai" value="自动找角度 / 背景锁机位" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="596" y="322" width="190" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="lane_capture" value="手势抓拍 / 本地保存" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=none;fontFamily=Microsoft YaHei;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="596" y="454" width="170" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="m_start" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" parent="1" vertex="1">
+          <mxGeometry x="622" y="105" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="m_template" value="获取模板&lt;br&gt;历史" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="672" y="84" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="m_photo" value="手机拍照" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="822" y="84" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="m_upload" value="上传图片&lt;br&gt;写历史" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="972" y="84" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="m_ai" value="后端 AI?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="1120" y="74" width="110" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="m_result" value="返回 AI&lt;br&gt;或历史结果" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="1263" y="84" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d_start" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" parent="1" vertex="1">
+          <mxGeometry x="622" y="237" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="d_session" value="打开设备&lt;br&gt;会话" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="674" y="216" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d_stream" value="手机推送&lt;br&gt;实时画面" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="822" y="216" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d_runtime" value="树莓派&lt;br&gt;检测构图" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="972" y="216" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d_preview" value="回传预览&lt;br&gt;与状态" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="1122" y="216" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="d_end" value="" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#111111;strokeWidth=2;" parent="1" vertex="1">
+          <mxGeometry x="1274" y="236" width="18" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="a_start" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" parent="1" vertex="1">
+          <mxGeometry x="622" y="369" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="a_pick" value="选择 AI&lt;br&gt;辅助功能" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="672" y="348" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="a_scan" value="云台扫描&lt;br&gt;候选画面" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="822" y="348" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="a_analyze" value="设备端 AI&lt;br&gt;分析候选" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="972" y="348" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="a_advice" value="返回角度&lt;br&gt;机位建议" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="1122" y="348" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="a_end" value="" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#111111;strokeWidth=2;" parent="1" vertex="1">
+          <mxGeometry x="1274" y="368" width="18" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="c_start" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" parent="1" vertex="1">
+          <mxGeometry x="622" y="502" width="16" height="16" as="geometry" />
+        </mxCell>
+        <mxCell id="c_gesture" value="手势检测" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="674" y="480" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="c_count" value="3 秒&lt;br&gt;倒计时" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="822" y="480" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="c_save" value="保存本地&lt;br&gt;captures" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="972" y="480" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="c_path" value="返回&lt;br&gt;capture_path" style="rounded=1;whiteSpace=wrap;html=1;arcSize=14;fillColor=#f3f3f3;strokeColor=#8a8a8a;strokeWidth=2;fontFamily=Microsoft YaHei;fontSize=14;align=center;verticalAlign=middle;" parent="1" vertex="1">
+          <mxGeometry x="1122" y="480" width="112" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="c_end" value="" style="ellipse;shape=doubleEllipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#ffffff;strokeColor=#111111;strokeWidth=2;" parent="1" vertex="1">
+          <mxGeometry x="1274" y="500" width="18" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="start" target="user" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="user" target="app" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="app" target="choose" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="手机独立拍摄" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="choose" target="m_start" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="286" />
+              <mxPoint x="540" y="113" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="设备联动" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540.41" y="245.49" />
+            </Array>
+            <mxPoint x="540.41" y="242.49" as="sourcePoint" />
+            <mxPoint x="623.000922523344" y="245.5075438596491" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="设备 AI" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="378" />
+            </Array>
+            <mxPoint x="507.9999999999998" y="284.0000000000001" as="sourcePoint" />
+            <mxPoint x="622.5838015129043" y="378.0000000000001" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="抓拍" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="510" />
+            </Array>
+            <mxPoint x="507.9999999999998" y="284.0000000000001" as="sourcePoint" />
+            <mxPoint x="622.2540333075851" y="510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="m_start" target="m_template" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="m2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="m_template" target="m_photo" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="m3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="m_photo" target="m_upload" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="m4" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="m_upload" target="m_ai" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="m5" value="是 / 否" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="m_ai" target="m_result" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="d_start" target="d_session" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="d_session" target="d_stream" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="d_stream" target="d_runtime" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="d_runtime" target="d_preview" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="d_preview" target="d_end" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="a_start" target="a_pick" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="a_pick" target="a_scan" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="a_scan" target="a_analyze" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="a_analyze" target="a_advice" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="a_advice" target="a_end" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="c_start" target="c_gesture" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="c_gesture" target="c_count" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="c_count" target="c_save" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="c_save" target="c_path" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" value="" style="endArrow=block;html=1;rounded=0;curved=0;edgeStyle=orthogonalEdgeStyle;orthogonalLoop=1;jettySize=auto;fontFamily=Microsoft YaHei;fontSize=12;strokeColor=#111111;strokeWidth=2;" parent="1" source="c_path" target="c_end" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

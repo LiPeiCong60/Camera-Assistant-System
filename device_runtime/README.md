@@ -36,7 +36,7 @@ mobile_client camera ImageStream
 - 依赖 `aiortc`
 - 用于后续切换或实验，不是当前手机端默认启动路径
 
-调试 fallback：
+调试接口：
 
 - `POST /api/device/stream/frame`
 - `GET /api/device/preview.jpg`

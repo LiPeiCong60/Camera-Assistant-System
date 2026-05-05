@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:image/image.dart' as img;
 
 import '../../models/ai_task_summary.dart';
 import '../../models/capture_record.dart';
@@ -82,7 +83,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   OverlayScene _overlayScene = OverlayScene.empty();
   _CameraShootMode _shootMode = _CameraShootMode.normal;
   int _selectedCameraIndex = 0;
-  bool _mirrorPreview = true;
+  bool _mirrorPreview = false;
   bool _isBannerVisible = false;
   bool _isShootModePickerExpanded = false;
   bool _isImageStreamActive = false;
@@ -123,13 +124,10 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   CameraDescription? get _activeCamera =>
       _cameras.isEmpty ? null : _cameras[_selectedCameraIndex];
 
-  bool get _shouldMirrorPreview => _mirrorPreview;
+  bool get _shouldMirrorPreview => false;
 
-  bool get _shouldMirrorDynamicOverlays {
-    final isFrontCamera =
-        _activeCamera?.lensDirection == CameraLensDirection.front;
-    return isFrontCamera ? !_shouldMirrorPreview : _shouldMirrorPreview;
-  }
+  bool get _shouldMirrorDynamicOverlays =>
+      _activeCamera?.lensDirection == CameraLensDirection.front;
 
   bool _isPreviewLandscape(CameraController controller) {
     final orientation = controller.value.isRecordingVideo
@@ -1097,7 +1095,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   void _togglePreviewMirror() {
     setState(() {
-      _mirrorPreview = !_mirrorPreview;
+      _mirrorPreview = false;
     });
     _showBanner(syncMessage: _mirrorPreview ? '画面镜像已开启。' : '画面镜像已关闭。');
   }
@@ -1119,15 +1117,21 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
     try {
       await _stopLivePoseDetection(clearOverlay: false);
+      final captureLensDirection =
+          _activeCamera?.lensDirection ?? CameraLensDirection.back;
       final capture = await controller.takePicture();
+      final normalizedCapture = await _normalizeCapturedPhoto(
+        capture,
+        lensDirection: captureLensDirection,
+      );
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _lastCapture = capture;
+        _lastCapture = normalizedCapture;
         if (_shootMode == _CameraShootMode.aiBurst) {
-          _pendingBurstCaptures.add(capture);
+          _pendingBurstCaptures.add(normalizedCapture);
         } else {
           _pendingBurstCaptures.clear();
         }
@@ -1146,7 +1150,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       if (_shootMode != _CameraShootMode.aiBurst) {
         unawaited(
           _ensureSingleCaptureRecorded(
-            capture,
+            normalizedCapture,
           ).then<void>((_) {}).catchError((Object _) {}),
         );
       }
@@ -1163,6 +1167,36 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         });
       }
     }
+  }
+
+  Future<XFile> _normalizeCapturedPhoto(
+    XFile capture, {
+    required CameraLensDirection lensDirection,
+  }) async {
+    if (lensDirection != CameraLensDirection.front) {
+      return capture;
+    }
+
+    try {
+      final file = File(capture.path);
+      final sourceBytes = await file.readAsBytes();
+      final decoded = img.decodeImage(sourceBytes);
+      if (decoded == null) {
+        return capture;
+      }
+
+      final oriented = img.bakeOrientation(decoded);
+      final corrected = img.flipHorizontal(oriented);
+      final lowerPath = capture.path.toLowerCase();
+      final encoded = lowerPath.endsWith('.png')
+          ? img.encodePng(corrected)
+          : img.encodeJpg(corrected, quality: 92);
+      await file.writeAsBytes(encoded, flush: true);
+    } catch (_) {
+      // Keep capture responsive even if front-camera normalization fails.
+    }
+
+    return capture;
   }
 
   Future<CaptureSessionSummary> _createCaptureSessionForCurrentShot() {

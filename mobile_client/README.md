@@ -49,7 +49,7 @@ flutter run `
 | `lib/app` | App 启动、主题和登录态路由 |
 | `lib/features` | 页面和业务功能 |
 | `lib/models` | 后端和设备端响应模型 |
-| `lib/services` | API、WebRTC、缓存、图片保存和配置 |
+| `lib/services` | API、设备联动传输（当前默认 WebSocket，保留 WebRTC 代码）、缓存、图片保存和配置 |
 | `test` | Flutter 测试 |
 
 ## 关键服务
@@ -57,7 +57,7 @@ flutter run `
 - `AppConfig`：读取 `API_BASE_URL`、`DEVICE_API_BASE_URL`，并保存用户在设置页填写的地址。
 - `MobileApiService`：访问 `/api/mobile/*`。
 - `DeviceApiService`：访问 `/api/device/*`。
-- `DeviceWebRtcService`：封装 WebRTC offer 和远端 preview track。
+- `DeviceWebRtcService`：封装保留中的 WebRTC 实验链路，不是当前默认推流入口。
 - `MobileCacheService`：缓存模板和历史记录。
 - `GallerySaveService`：保存图片到设备相册或本地文件。
 
@@ -74,7 +74,7 @@ CameraController.startImageStream
 -> Flutter preview
 ```
 
-WebRTC 服务代码仍在仓库中，但当前默认入口 `_startMobilePush()` 调用的是 WebSocket fallback。遇到卡顿时，优先从树莓派性能档、预览分辨率、检测开关和 Wi-Fi 环境排查。
+WebRTC 服务代码仍在仓库中，但当前默认入口 `_startMobilePush()` 调用的是 WebSocket 主链路。遇到卡顿时，优先从树莓派性能档、预览分辨率、检测开关和 Wi-Fi 环境排查。
 
 ## 设备抓拍和历史
 
@@ -100,7 +100,7 @@ WebRTC 服务代码仍在仓库中，但当前默认入口 `_startMobilePush()` 
 - `MODIFY_AUDIO_SETTINGS`
 - `android:usesCleartextTraffic="true"`
 
-局域网 HTTP 调试依赖 cleartext 配置。部分 WebRTC 实现即使只推视频，也可能需要音频相关权限才能稳定初始化。
+局域网 HTTP 调试依赖 cleartext 配置。仓库里保留的 WebRTC 实验链路在部分设备上即使只推视频，也可能需要音频相关权限才能稳定初始化。
 
 ## 构建和测试
 

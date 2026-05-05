@@ -60,6 +60,10 @@ class BackgroundLockStartRequest(ScanRequest):
     delay_s: float = Field(0.0, ge=0.0, le=30.0)
 
 
+class AngleSearchStartRequest(ScanRequest):
+    delay_s: float = Field(0.0, ge=0.0, le=30.0)
+
+
 def _serialize_photo_analysis(analysis: CaptureAnalysis) -> dict:
     return {
         "score": analysis.score,
@@ -144,11 +148,11 @@ async def analyze_uploaded_photo(
 
 
 @router.post("/angle-search/start")
-def start_angle_search(payload: ScanRequest | None = None) -> dict:
+def start_angle_search(payload: AngleSearchStartRequest | None = None) -> dict:
     session = require_session()
-    payload = payload or ScanRequest()
+    payload = payload or AngleSearchStartRequest()
     try:
-        session.start_angle_search_async(payload.to_scan_config())
+        session.start_angle_search_async(payload.to_scan_config(), payload.delay_s)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -156,6 +160,7 @@ def start_angle_search(payload: ScanRequest | None = None) -> dict:
         "message": "ai angle search started",
         "data": {
             "ai_angle_search_running": True,
+            "delay_s": payload.delay_s,
             "scan_config": payload.to_scan_config(),
         },
     }

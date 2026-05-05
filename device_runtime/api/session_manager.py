@@ -345,6 +345,9 @@ class DeviceSessionContext:
         self._gesture_countdown_until: float | None = None
         self._gesture_countdown_event: str | None = None
         self._gesture_countdown_reason: str | None = None
+        self._ai_countdown_started_at: float | None = None
+        self._ai_countdown_until: float | None = None
+        self._ai_countdown_task: str | None = None
         self._detector_interval_s = 1.0 / max(1.0, self.config.detection.detector_fps)
         self._last_submit_ts = 0.0
         self._stop_event = threading.Event()
@@ -528,14 +531,14 @@ class DeviceSessionContext:
                 "fit_score": self.runtime_state.ai_lock_fit_score,
                 "target_box_norm": self.runtime_state.ai_lock_target_box_norm,
             },
-            "ai_angle_search_running": self.runtime_state.ai_angle_search_running,
+            "ai_angle_search_running": self._angle_search_active(),
             "background_lock_running": self._background_job is not None and self._background_job.is_alive(),
             "last_angle_search_result": self.last_angle_search_result,
             "last_angle_search_error": self.last_angle_search_error,
             "last_background_lock_result": self.last_background_lock_result,
             "last_background_lock_error": self.last_background_lock_error,
             "ai_status": {
-                "angle_search_running": self.runtime_state.ai_angle_search_running,
+                "angle_search_running": self._angle_search_active(),
                 "background_lock_running": self._background_job is not None and self._background_job.is_alive(),
                 "lock_enabled": self.runtime_state.ai_lock_mode_enabled,
                 "lock_fit_score": self.runtime_state.ai_lock_fit_score,
@@ -544,6 +547,7 @@ class DeviceSessionContext:
                 "last_angle_search_error": self.last_angle_search_error,
                 "last_background_lock_result": self.last_background_lock_result,
                 "last_background_lock_error": self.last_background_lock_error,
+                "countdown": self._ai_countdown_status(),
                 "provider_status": ai_provider_status,
                 "latest_capture": latest_capture,
             },
@@ -675,15 +679,15 @@ class DeviceSessionContext:
 
             time.sleep(0.01)
 
-    def start_angle_search_async(self, scan_config: dict[str, Any]) -> None:
+    def start_angle_search_async(self, scan_config: dict[str, Any], delay_s: float = 0.0) -> None:
         with self._job_lock:
-            if self.ai_orchestrator.angle_search_running:
-                raise RuntimeError("AI angle search is already running")
+            if self._has_running_ai_job():
+                raise RuntimeError("An AI task is already running")
             self.last_angle_search_result = None
             self.last_angle_search_error = None
             self._angle_job = threading.Thread(
                 target=self._run_angle_search_job,
-                args=(scan_config,),
+                args=(scan_config, delay_s),
                 name=f"angle-search-{self.session_code}",
                 daemon=True,
             )
@@ -691,8 +695,8 @@ class DeviceSessionContext:
 
     def start_background_lock_async(self, scan_config: dict[str, Any], delay_s: float) -> None:
         with self._job_lock:
-            if self._background_job is not None and self._background_job.is_alive():
-                raise RuntimeError("Background lock scan is already running")
+            if self._has_running_ai_job():
+                raise RuntimeError("An AI task is already running")
             self.last_background_lock_result = None
             self.last_background_lock_error = None
             self._background_job = threading.Thread(
@@ -703,11 +707,17 @@ class DeviceSessionContext:
             )
             self._background_job.start()
 
-    def _run_angle_search_job(self, scan_config: dict[str, Any]) -> None:
+    def _run_angle_search_job(self, scan_config: dict[str, Any], delay_s: float) -> None:
         try:
+            if delay_s > 0.05:
+                self._start_ai_countdown("angle_search", delay_s)
+                time.sleep(delay_s)
+            self._clear_ai_countdown()
             self.last_angle_search_result = self.ai_orchestrator.start_angle_search(scan_config)
         except Exception as exc:
             self.last_angle_search_error = str(exc)
+        finally:
+            self._clear_ai_countdown()
 
     def _run_background_lock_job(self, scan_config: dict[str, Any], delay_s: float) -> None:
         try:
@@ -921,6 +931,48 @@ class DeviceSessionContext:
             "capture_at": getattr(self, "_gesture_countdown_until", None),
             "event": getattr(self, "_gesture_countdown_event", None),
             "reason": getattr(self, "_gesture_countdown_reason", None),
+        }
+
+    def _has_running_ai_job(self) -> bool:
+        return (
+            (self._angle_job is not None and self._angle_job.is_alive())
+            or (self._background_job is not None and self._background_job.is_alive())
+            or self.ai_orchestrator.angle_search_running
+        )
+
+    def _angle_search_active(self) -> bool:
+        return (self._angle_job is not None and self._angle_job.is_alive()) or self.ai_orchestrator.angle_search_running
+
+    def _start_ai_countdown(self, task: str, duration_s: float, now: float | None = None) -> None:
+        started_at = time.time() if now is None else now
+        self._ai_countdown_started_at = started_at
+        self._ai_countdown_until = started_at + max(0.0, float(duration_s))
+        self._ai_countdown_task = task
+
+    def _clear_ai_countdown(self) -> None:
+        self._ai_countdown_started_at = None
+        self._ai_countdown_until = None
+        self._ai_countdown_task = None
+
+    def _ai_countdown_remaining(self, now: float | None = None) -> float | None:
+        countdown_until = self._ai_countdown_until
+        if countdown_until is None:
+            return None
+        remaining = countdown_until - (time.time() if now is None else now)
+        return max(0.0, remaining)
+
+    def _ai_countdown_status(self) -> dict[str, Any]:
+        remaining = self._ai_countdown_remaining()
+        duration_s = None
+        if self._ai_countdown_started_at is not None and self._ai_countdown_until is not None:
+            duration_s = max(0.0, self._ai_countdown_until - self._ai_countdown_started_at)
+        return {
+            "active": remaining is not None,
+            "remaining_s": remaining,
+            "duration_s": duration_s,
+            "started_at": self._ai_countdown_started_at,
+            "run_at": self._ai_countdown_until,
+            "task": self._ai_countdown_task,
         }
 
     @staticmethod
