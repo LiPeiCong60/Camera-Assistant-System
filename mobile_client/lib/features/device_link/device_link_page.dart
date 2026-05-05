@@ -65,16 +65,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         DeviceOrientation.portraitDown: 180,
         DeviceOrientation.landscapeRight: 270,
       };
-  static const String _prefsBaseUrlKey = 'device_link.base_url';
-  static const String _prefsStreamUrlKey = 'device_link.stream_url';
-  static const String _prefsAutoRefreshKey = 'device_link.auto_refresh';
-  static const String _prefsLandscapeControlsLeftKey =
-      'device_link.landscape_controls_left';
-  static const String _prefsJoystickSensitivityKey =
-      'device_link.joystick_sensitivity';
-  static const String _prefsJoystickVisibleKey = 'device_link.joystick_visible';
-  static const String _prefsRecentConnectionsKey =
-      'device_link.recent_connections';
   static const String _mobilePushStreamUrl = 'mobile_push';
   static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 66);
   static const Duration _manualMoveRepeatInterval = Duration(milliseconds: 110);
@@ -91,6 +81,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   final DeviceApiService _deviceApiService = const DeviceApiService();
   final DeviceWebRtcService _deviceWebRtcService = const DeviceWebRtcService();
   final GallerySaveService _gallerySaveService = const GallerySaveService();
+  final _DeviceLinkPreferenceStore _preferenceStore =
+      const _DeviceLinkPreferenceStore();
   late final TextEditingController _baseUrlController;
   late final TextEditingController _streamUrlController;
   late final TextEditingController _sessionCodeController;
@@ -3077,31 +3069,25 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Future<void> _loadPersistedConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    final recentRaw =
-        prefs.getStringList(_prefsRecentConnectionsKey) ?? <String>[];
-    final recentConnections = recentRaw
-        .map(_DeviceConnectionPreset.tryParse)
-        .whereType<_DeviceConnectionPreset>()
-        .toList(growable: false);
+    final draft = await _preferenceStore.loadDraft(
+      fallbackBaseUrl: _baseUrlController.text,
+      fallbackStreamUrl: _streamUrlController.text,
+      fallbackAutoRefreshEnabled: _autoRefreshEnabled,
+      fallbackLandscapeControlsOnLeft: _landscapeControlsOnLeft,
+      fallbackJoystickVisible: _isJoystickVisible,
+      fallbackJoystickSensitivity: _joystickSensitivity,
+    );
     if (!mounted) {
       return;
     }
     setState(() {
-      _baseUrlController.text =
-          prefs.getString(_prefsBaseUrlKey) ?? _baseUrlController.text;
-      _streamUrlController.text =
-          prefs.getString(_prefsStreamUrlKey) ?? _streamUrlController.text;
-      _autoRefreshEnabled =
-          prefs.getBool(_prefsAutoRefreshKey) ?? _autoRefreshEnabled;
-      _landscapeControlsOnLeft =
-          prefs.getBool(_prefsLandscapeControlsLeftKey) ??
-          _landscapeControlsOnLeft;
-      _isJoystickVisible =
-          prefs.getBool(_prefsJoystickVisibleKey) ?? _isJoystickVisible;
-      _joystickSensitivity =
-          prefs.getDouble(_prefsJoystickSensitivityKey) ?? _joystickSensitivity;
-      _recentConnections = recentConnections;
+      _baseUrlController.text = draft.baseUrl;
+      _streamUrlController.text = draft.streamUrl;
+      _autoRefreshEnabled = draft.autoRefreshEnabled;
+      _landscapeControlsOnLeft = draft.landscapeControlsOnLeft;
+      _isJoystickVisible = draft.joystickVisible;
+      _joystickSensitivity = draft.joystickSensitivity;
+      _recentConnections = draft.recentConnections;
     });
     _restartPolling();
   }
@@ -3115,16 +3101,17 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Future<void> _persistDraftConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsBaseUrlKey, _baseUrlController.text.trim());
-    await prefs.setString(_prefsStreamUrlKey, _streamUrlController.text.trim());
-    await prefs.setBool(_prefsAutoRefreshKey, _autoRefreshEnabled);
-    await prefs.setBool(
-      _prefsLandscapeControlsLeftKey,
-      _landscapeControlsOnLeft,
+    await _preferenceStore.saveDraft(
+      _DeviceLinkDraftConfig(
+        baseUrl: _baseUrlController.text.trim(),
+        streamUrl: _streamUrlController.text.trim(),
+        autoRefreshEnabled: _autoRefreshEnabled,
+        landscapeControlsOnLeft: _landscapeControlsOnLeft,
+        joystickVisible: _isJoystickVisible,
+        joystickSensitivity: _joystickSensitivity,
+        recentConnections: const <_DeviceConnectionPreset>[],
+      ),
     );
-    await prefs.setBool(_prefsJoystickVisibleKey, _isJoystickVisible);
-    await prefs.setDouble(_prefsJoystickSensitivityKey, _joystickSensitivity);
   }
 
   Future<void> _rememberCurrentConnection() async {
@@ -3134,19 +3121,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       sessionCode: _sessionCodeController.text.trim(),
       updatedAt: DateTime.now(),
     );
-    final merged = <_DeviceConnectionPreset>[
+    final limited = await _preferenceStore.rememberConnection(
       preset,
-      ..._recentConnections.where(
-        (item) =>
-            item.baseUrl != preset.baseUrl ||
-            item.streamUrl != preset.streamUrl,
-      ),
-    ];
-    final limited = merged.take(5).toList(growable: false);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      _prefsRecentConnectionsKey,
-      limited.map((item) => item.toStorageString()).toList(growable: false),
+      currentConnections: _recentConnections,
     );
     if (!mounted) {
       return;
@@ -3167,8 +3144,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Future<void> _clearRecentConnections() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefsRecentConnectionsKey);
+    await _preferenceStore.clearRecentConnections();
     if (!mounted) {
       return;
     }
