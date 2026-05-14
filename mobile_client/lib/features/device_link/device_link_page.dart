@@ -32,6 +32,7 @@ import '../template/template_photo_dialog.dart';
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_widgets.dart';
+part 'parts/mobile_push_camera_actions.dart';
 part 'parts/mobile_push_socket_sender.dart';
 part 'parts/mobile_push_state_actions.dart';
 part 'parts/mobile_push_tools.dart';
@@ -1105,45 +1106,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     if (_isMobilePushEnabled) {
       _setMobilePushError('手机 WebSocket 推流连接已关闭。');
     }
-  }
-
-  Future<CameraDescription> _preferredMobilePushCamera() async {
-    if (_mobilePushCameras.isEmpty) {
-      _mobilePushCameras = await availableCameras();
-    }
-    if (_mobilePushCameras.isEmpty) {
-      throw const ApiException('没有找到可用摄像头，请检查系统权限。');
-    }
-    return _findMobilePushCamera(_mobilePushLensDirection) ??
-        _findMobilePushCamera(CameraLensDirection.back) ??
-        _mobilePushCameras.first;
-  }
-
-  CameraDescription? _findMobilePushCamera(CameraLensDirection direction) {
-    for (final camera in _mobilePushCameras) {
-      if (camera.lensDirection == direction) {
-        return camera;
-      }
-    }
-    return null;
-  }
-
-  String _mobilePushLensLabel([CameraLensDirection? direction]) {
-    final lensDirection =
-        direction ??
-        _mobilePushCamera?.lensDirection ??
-        _mobilePushLensDirection;
-    return switch (lensDirection) {
-      CameraLensDirection.front => '前摄',
-      CameraLensDirection.back => '后摄',
-      CameraLensDirection.external => '外接摄像头',
-    };
-  }
-
-  String _mobilePushSwitchTargetLabel() {
-    final currentDirection =
-        _mobilePushCamera?.lensDirection ?? _mobilePushLensDirection;
-    return currentDirection == CameraLensDirection.front ? '切换到后摄' : '切换到前摄';
   }
 
   Future<void> _switchMobilePushCamera() async {
