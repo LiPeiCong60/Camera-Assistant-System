@@ -41,6 +41,7 @@ part 'parts/mobile_push_camera_actions.dart';
 part 'parts/mobile_push_socket_sender.dart';
 part 'parts/mobile_push_state_actions.dart';
 part 'parts/mobile_push_tools.dart';
+part 'parts/manual_control_helpers.dart';
 part 'parts/preview_stream_controller.dart';
 
 class DeviceLinkPage extends StatefulWidget {
@@ -1492,21 +1493,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     _scheduleDraftPersist();
   }
 
-  Offset _defaultJoystickAnchor(bool isLandscape) {
-    if (!isLandscape) {
-      return const Offset(0.72, 0.70);
-    }
-    return _landscapeControlsOnLeft
-        ? const Offset(0.74, 0.56)
-        : const Offset(0.26, 0.56);
-  }
-
-  Offset _effectiveJoystickAnchor(bool isLandscape) {
-    return _hasCustomJoystickAnchor
-        ? _joystickAnchor
-        : _defaultJoystickAnchor(isLandscape);
-  }
-
   void _moveJoystickAnchor(DragUpdateDetails details, Size bounds) {
     final current = _effectiveJoystickAnchor(bounds.width > bounds.height);
     final next = Offset(
@@ -1549,16 +1535,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return;
     }
     _startJoystickMoveRepeat(clamped);
-  }
-
-  String? _manualMoveActionFromVector(Offset vector) {
-    if (vector.distance < 0.22) {
-      return null;
-    }
-    if (vector.dx.abs() > vector.dy.abs()) {
-      return vector.dx > 0 ? 'right' : 'left';
-    }
-    return vector.dy > 0 ? 'down' : 'up';
   }
 
   void _endJoystickGesture() {
