@@ -53,13 +53,12 @@ extension _DeviceLinkMobilePushStateActions on _DeviceLinkPageState {
   }
 
   bool _shouldSendMobilePushFrame({
-    required WebSocket? socket,
+    required _MobilePushSocketSender sender,
     required CameraImage image,
   }) {
     return _isMobilePushEnabled &&
         !_isPushingMobileFrame &&
-        socket != null &&
-        socket.readyState == WebSocket.open &&
+        sender.isOpen &&
         image.planes.isNotEmpty;
   }
 

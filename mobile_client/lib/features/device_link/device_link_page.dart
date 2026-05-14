@@ -32,6 +32,7 @@ import '../template/template_photo_dialog.dart';
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_widgets.dart';
+part 'parts/mobile_push_socket_sender.dart';
 part 'parts/mobile_push_state_actions.dart';
 part 'parts/mobile_push_tools.dart';
 part 'parts/preview_stream_controller.dart';
@@ -130,7 +131,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   Offset _joystickAnchor = const Offset(0.5, 0.72);
   Offset _joystickVector = Offset.zero;
   bool _hasCustomJoystickAnchor = false;
-  WebSocket? _mobilePushSocket;
+  final _MobilePushSocketSender _mobilePushSocketSender =
+      _MobilePushSocketSender();
   DeviceWebRtcSession? _webRtcSession;
   CameraController? _mobilePushCameraController;
   CameraDescription? _mobilePushCamera;
@@ -1084,24 +1086,25 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     });
     await _rememberCurrentConnection();
     unawaited(_startPreviewStream());
-    _mobilePushSocket = await WebSocket.connect(
-      _buildDeviceWebSocketUri('/api/device/stream/mobile-ws').toString(),
-    ).timeout(_mobilePushSocketTimeout);
-    _mobilePushSocket!.listen(
-      (_) {},
-      onError: (_) {
-        if (_isMobilePushEnabled) {
-          _setMobilePushError('手机 WebSocket 推流连接出错，请检查设备运行时地址。');
-        }
-      },
-      onDone: () {
-        if (_isMobilePushEnabled) {
-          _setMobilePushError('手机 WebSocket 推流连接已关闭。');
-        }
-      },
-      cancelOnError: false,
+    await _mobilePushSocketSender.connect(
+      uri: _buildDeviceWebSocketUri('/api/device/stream/mobile-ws'),
+      timeout: _mobilePushSocketTimeout,
+      onError: _handleMobilePushSocketError,
+      onClosed: _handleMobilePushSocketClosed,
     );
     await controller.startImageStream(_handleMobilePushFrame);
+  }
+
+  void _handleMobilePushSocketError() {
+    if (_isMobilePushEnabled) {
+      _setMobilePushError('手机 WebSocket 推流连接出错，请检查设备运行时地址。');
+    }
+  }
+
+  void _handleMobilePushSocketClosed() {
+    if (_isMobilePushEnabled) {
+      _setMobilePushError('手机 WebSocket 推流连接已关闭。');
+    }
   }
 
   Future<CameraDescription> _preferredMobilePushCamera() async {
@@ -1242,15 +1245,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
     await _stopWebRtcSession();
 
-    final socket = _mobilePushSocket;
-    _mobilePushSocket = null;
-    if (socket != null) {
-      try {
-        await socket.close();
-      } catch (_) {
-        // Ignore socket shutdown errors while leaving the page.
-      }
-    }
+    await _mobilePushSocketSender.close();
 
     final controller = _mobilePushCameraController;
     _mobilePushCameraController = null;
@@ -1361,11 +1356,12 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   void _handleMobilePushFrame(CameraImage image) {
-    final socket = _mobilePushSocket;
-    if (!_shouldSendMobilePushFrame(socket: socket, image: image)) {
+    if (!_shouldSendMobilePushFrame(
+      sender: _mobilePushSocketSender,
+      image: image,
+    )) {
       return;
     }
-    final openSocket = socket!;
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (_isMobilePushFrameThrottled(nowMs)) {
@@ -1377,11 +1373,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       final rotationDegrees = _mobilePushRotationForCurrentFrame();
       if (!_mobilePushConfigSent ||
           rotationDegrees != _mobilePushRotationDegrees) {
-        openSocket.add(
-          _MobilePushTools.buildNv21ConfigJson(
-            image: image,
-            rotationDegrees: rotationDegrees,
-          ),
+        _mobilePushSocketSender.sendConfig(
+          image: image,
+          rotationDegrees: rotationDegrees,
         );
         _mobilePushRotationDegrees = rotationDegrees;
         _mobilePushConfigSent = true;
@@ -1391,7 +1385,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _setMobilePushError('当前相机格式暂不支持旧版推流，请使用 Android NV21 摄像头格式。');
         return;
       }
-      openSocket.add(frameBytes);
+      _mobilePushSocketSender.sendFrame(frameBytes);
       _markMobilePushFrameSent(nowMs);
 
       if (mounted && _shouldRefreshMobilePushFrameUi(nowMs)) {
