@@ -32,6 +32,7 @@ import '../template/template_photo_dialog.dart';
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_widgets.dart';
+part 'parts/mobile_push_tools.dart';
 part 'parts/preview_stream_controller.dart';
 
 class DeviceLinkPage extends StatefulWidget {
@@ -59,13 +60,6 @@ class DeviceLinkPage extends StatefulWidget {
 enum _DeviceHudPanel { control, mode, ai, device }
 
 class _DeviceLinkPageState extends State<DeviceLinkPage> {
-  static const Map<DeviceOrientation, int> _cameraOrientations =
-      <DeviceOrientation, int>{
-        DeviceOrientation.portraitUp: 0,
-        DeviceOrientation.landscapeLeft: 90,
-        DeviceOrientation.portraitDown: 180,
-        DeviceOrientation.landscapeRight: 270,
-      };
   static const String _mobilePushStreamUrl = 'mobile_push';
   static const Duration _mobilePushFrameThrottle = Duration(milliseconds: 66);
   static const Duration _manualMoveRepeatInterval = Duration(milliseconds: 110);
@@ -1024,7 +1018,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       baseUrl: _baseUrlController.text,
       sessionCode: _sessionCodeController.text.trim(),
       streamUrl: _mobilePushStreamUrl,
-      mirrorView: _mobilePushRequiresMirrorCorrection(camera.lensDirection),
+      mirrorView: _MobilePushTools.requiresMirrorCorrection(
+        camera.lensDirection,
+      ),
     );
     final session = await _deviceWebRtcService.start(
       baseUrl: _baseUrlController.text,
@@ -1083,7 +1079,9 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       baseUrl: _baseUrlController.text,
       sessionCode: _sessionCodeController.text.trim(),
       streamUrl: _mobilePushStreamUrl,
-      mirrorView: _mobilePushRequiresMirrorCorrection(camera.lensDirection),
+      mirrorView: _MobilePushTools.requiresMirrorCorrection(
+        camera.lensDirection,
+      ),
     );
     setState(() {
       _status = status;
@@ -1135,10 +1133,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
     }
     return null;
-  }
-
-  bool _mobilePushRequiresMirrorCorrection(CameraLensDirection direction) {
-    return direction == CameraLensDirection.front;
   }
 
   String _mobilePushLensLabel([CameraLensDirection? direction]) {
@@ -1411,18 +1405,15 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       if (!_mobilePushConfigSent ||
           rotationDegrees != _mobilePushRotationDegrees) {
         socket.add(
-          jsonEncode(<String, dynamic>{
-            'type': 'config',
-            'format': 'nv21',
-            'width': image.width,
-            'height': image.height,
-            'rotation_degrees': rotationDegrees,
-          }),
+          _MobilePushTools.buildNv21ConfigJson(
+            image: image,
+            rotationDegrees: rotationDegrees,
+          ),
         );
         _mobilePushRotationDegrees = rotationDegrees;
         _mobilePushConfigSent = true;
       }
-      final frameBytes = _encodeCameraImageAsNv21(image);
+      final frameBytes = _MobilePushTools.encodeCameraImageAsNv21(image);
       if (frameBytes == null) {
         _setMobilePushError('当前相机格式暂不支持旧版推流，请使用 Android NV21 摄像头格式。');
         return;
@@ -1453,75 +1444,12 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   int _mobilePushRotationForCurrentFrame() {
     final controller = _mobilePushCameraController;
     final camera = _mobilePushCamera;
-    if (controller == null || camera == null) {
-      return _mobilePushRotationDegrees >= 0 ? _mobilePushRotationDegrees : 0;
-    }
-    final deviceOrientation =
-        _cameraOrientations[controller.value.deviceOrientation] ?? 0;
-    if (camera.lensDirection == CameraLensDirection.front) {
-      return (camera.sensorOrientation + deviceOrientation) % 360;
-    }
-    return (camera.sensorOrientation - deviceOrientation + 360) % 360;
-  }
-
-  Uint8List? _encodeCameraImageAsNv21(CameraImage image) {
-    final expectedSize = image.width * image.height * 3 ~/ 2;
-    if (image.planes.length == 1 &&
-        image.planes.first.bytes.length == expectedSize) {
-      return image.planes.first.bytes;
-    }
-    if (image.planes.length < 3) {
-      return null;
-    }
-
-    final yPlane = image.planes[0];
-    final uPlane = image.planes[1];
-    final vPlane = image.planes[2];
-    final output = Uint8List(expectedSize);
-    var offset = 0;
-
-    for (var row = 0; row < image.height; row += 1) {
-      final rowStart = row * yPlane.bytesPerRow;
-      final yPixelStride = yPlane.bytesPerPixel ?? 1;
-      if (yPixelStride == 1) {
-        final rowEnd = rowStart + image.width;
-        if (rowEnd > yPlane.bytes.length) {
-          return null;
-        }
-        output.setRange(offset, offset + image.width, yPlane.bytes, rowStart);
-        offset += image.width;
-        continue;
-      }
-      for (var col = 0; col < image.width; col += 1) {
-        final index = rowStart + col * yPixelStride;
-        if (index >= yPlane.bytes.length) {
-          return null;
-        }
-        output[offset] = yPlane.bytes[index];
-        offset += 1;
-      }
-    }
-
-    final uvWidth = image.width ~/ 2;
-    final uvHeight = image.height ~/ 2;
-    final uPixelStride = uPlane.bytesPerPixel ?? 1;
-    final vPixelStride = vPlane.bytesPerPixel ?? 1;
-    for (var row = 0; row < uvHeight; row += 1) {
-      final uRowStart = row * uPlane.bytesPerRow;
-      final vRowStart = row * vPlane.bytesPerRow;
-      for (var col = 0; col < uvWidth; col += 1) {
-        final uIndex = uRowStart + col * uPixelStride;
-        final vIndex = vRowStart + col * vPixelStride;
-        if (uIndex >= uPlane.bytes.length || vIndex >= vPlane.bytes.length) {
-          return null;
-        }
-        output[offset] = vPlane.bytes[vIndex];
-        output[offset + 1] = uPlane.bytes[uIndex];
-        offset += 2;
-      }
-    }
-
-    return output;
+    return _MobilePushTools.resolveRotationDegrees(
+      deviceOrientation: controller?.value.deviceOrientation,
+      lensDirection: camera?.lensDirection,
+      sensorOrientation: camera?.sensorOrientation,
+      fallbackRotationDegrees: _mobilePushRotationDegrees,
+    );
   }
 
   Uri _buildDeviceWebSocketUri(String path) {
