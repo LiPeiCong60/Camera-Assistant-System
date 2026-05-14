@@ -32,6 +32,7 @@ import '../template/template_photo_dialog.dart';
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_widgets.dart';
+part 'parts/preview_stream_controller.dart';
 
 class DeviceLinkPage extends StatefulWidget {
   const DeviceLinkPage({
@@ -83,6 +84,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   final GallerySaveService _gallerySaveService = const GallerySaveService();
   final _DeviceLinkPreferenceStore _preferenceStore =
       const _DeviceLinkPreferenceStore();
+  final _DevicePreviewStreamController _previewStreamController =
+      _DevicePreviewStreamController();
   late final TextEditingController _baseUrlController;
   late final TextEditingController _streamUrlController;
   late final TextEditingController _sessionCodeController;
@@ -128,10 +131,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   bool _isManualMoveSending = false;
   String? _activeManualMoveAction;
   Offset? _activeManualMoveVector;
-  WebSocket? _previewSocket;
-  Uint8List? _latestPreviewFrameBytes;
-  DateTime? _latestPreviewFrameAt;
-  String? _previewStreamErrorMessage;
   _DeviceHudPanel? _activeHudPanel = _DeviceHudPanel.control;
   Offset _joystickAnchor = const Offset(0.5, 0.72);
   Offset _joystickVector = Offset.zero;
@@ -173,6 +172,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     _sessionCodeController = TextEditingController(
       text: widget.initialSessionCode ?? _buildSessionCode(),
     );
+    _previewStreamController.addListener(_handlePreviewStreamChanged);
     _baseUrlController.addListener(_scheduleDraftPersist);
     _streamUrlController.addListener(_scheduleDraftPersist);
     _loadTemplates();
@@ -191,10 +191,27 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     _hudMessageTimer?.cancel();
     _baseUrlController.removeListener(_scheduleDraftPersist);
     _streamUrlController.removeListener(_scheduleDraftPersist);
+    _previewStreamController.removeListener(_handlePreviewStreamChanged);
+    _previewStreamController.dispose();
     _baseUrlController.dispose();
     _streamUrlController.dispose();
     _sessionCodeController.dispose();
     super.dispose();
+  }
+
+  Uint8List? get _latestPreviewFrameBytes =>
+      _previewStreamController.latestFrameBytes;
+
+  DateTime? get _latestPreviewFrameAt => _previewStreamController.latestFrameAt;
+
+  String? get _previewStreamErrorMessage =>
+      _previewStreamController.errorMessage;
+
+  void _handlePreviewStreamChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   String? _currentHudMessageKey() {
@@ -223,10 +240,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
       setState(() {
         _errorMessage = null;
-        _previewStreamErrorMessage = null;
         _syncMessage = null;
         _hudMessageTimerKey = null;
       });
+      _previewStreamController.clearError();
     });
   }
 
@@ -888,10 +905,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       setState(() {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
-        _latestPreviewFrameBytes = null;
-        _latestPreviewFrameAt = null;
-        _previewStreamErrorMessage = null;
       });
+      _previewStreamController.clear();
       unawaited(_startPreviewStream());
       await _rememberCurrentConnection();
       await _refreshStatusSilently();
@@ -928,9 +943,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       );
       setState(() {
         _status = null;
-        _latestPreviewFrameBytes = null;
-        _latestPreviewFrameAt = null;
-        _previewStreamErrorMessage = null;
         _lastCapturePath = null;
         _lastAiResultTitle = null;
         _lastAiResultBody = null;
@@ -942,6 +954,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _lastStatusUpdatedAt = null;
         _sessionCodeController.text = _buildSessionCode();
       });
+      _previewStreamController.clear();
       await _refreshHealthSilently();
     }, successMessage: '设备会话已关闭。');
   }
@@ -970,9 +983,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       setState(() {
         _status = status;
         _lastStatusUpdatedAt = DateTime.now();
-        _latestPreviewFrameBytes = null;
-        _previewStreamErrorMessage = null;
       });
+      _previewStreamController.clear();
       unawaited(_startPreviewStream());
       await _rememberCurrentConnection();
     }, successMessage: '视频流已切换。');
@@ -1042,11 +1054,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       _lastMobilePushFrameSentAtMs = 0;
       _lastMobilePushUiUpdateAtMs = 0;
       _lastMobilePushFrameAt = DateTime.now();
-      _latestPreviewFrameBytes = null;
-      _latestPreviewFrameAt = DateTime.now();
       _syncMessage = '手机画面 WebRTC 推流已启动。';
       _addActionRecord('system', '手机画面 WebRTC 推流已启动。');
     });
+    _previewStreamController.clear(frameAt: DateTime.now());
     await _rememberCurrentConnection();
   }
 
@@ -1336,8 +1347,8 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       setState(() {
         _mobilePushErrorMessage = null;
         _syncMessage = '屏幕方向变化，正在重新校正手机推流画面。';
-        _latestPreviewFrameBytes = null;
       });
+      _previewStreamController.clear(clearError: false);
     }
 
     try {
@@ -1555,60 +1566,15 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Future<void> _startPreviewStream() async {
-    if (_previewSocket != null || _status?.sessionOpened != true) {
-      return;
-    }
-
-    try {
-      final socket = await WebSocket.connect(
-        _buildDeviceWebSocketUri('/api/device/preview-ws').toString(),
-      ).timeout(_mobilePushSocketTimeout);
-      _previewSocket = socket;
-      socket.listen(
-        (dynamic data) {
-          if (!mounted || data is! List<int>) {
-            return;
-          }
-          setState(() {
-            _latestPreviewFrameBytes = Uint8List.fromList(data);
-            _latestPreviewFrameAt = DateTime.now();
-            _previewStreamErrorMessage = null;
-          });
-        },
-        onError: (_) {
-          _previewSocket = null;
-          if (mounted) {
-            setState(() {
-              _previewStreamErrorMessage = '实时预览连接出错，请检查设备运行时地址。';
-            });
-          }
-        },
-        onDone: () {
-          _previewSocket = null;
-        },
-        cancelOnError: false,
-      );
-    } catch (_) {
-      _previewSocket = null;
-      if (mounted) {
-        setState(() {
-          _previewStreamErrorMessage = '实时预览暂时不可用，请确认设备会话已打开。';
-        });
-      }
-    }
+    await _previewStreamController.start(
+      uri: _buildDeviceWebSocketUri('/api/device/preview-ws'),
+      hasSession: _status?.sessionOpened == true,
+      timeout: _mobilePushSocketTimeout,
+    );
   }
 
   Future<void> _stopPreviewStream() async {
-    final socket = _previewSocket;
-    _previewSocket = null;
-    if (socket == null) {
-      return;
-    }
-    try {
-      await socket.close();
-    } catch (_) {
-      // Ignore preview socket shutdown errors while leaving the page.
-    }
+    await _previewStreamController.stop();
   }
 
   void _startManualMoveRepeat(String action) {
