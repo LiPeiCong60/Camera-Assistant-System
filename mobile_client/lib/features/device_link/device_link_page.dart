@@ -34,6 +34,7 @@ part 'parts/ai_result_formatters.dart';
 part 'parts/device_capture_helpers.dart';
 part 'parts/device_capture_records.dart';
 part 'parts/device_link_records.dart';
+part 'parts/device_polling_helpers.dart';
 part 'parts/device_link_url_helpers.dart';
 part 'parts/device_link_widgets.dart';
 part 'parts/mobile_push_camera_actions.dart';
@@ -2363,13 +2364,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     });
   }
 
-  Duration _resolvePollInterval(DeviceStatusSummary? status) {
-    final hasCountdown =
-        status?.gestureStatus.captureCountdownActive == true ||
-        status?.aiStatus.countdown.active == true;
-    return hasCountdown ? _countdownPollInterval : _defaultPollInterval;
-  }
-
   void _syncPollingInterval(DeviceStatusSummary? status) {
     final nextInterval = _resolvePollInterval(status);
     if (_pollInterval == nextInterval) {
@@ -2416,22 +2410,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     });
     _persistDraftConfig();
     _restartPolling();
-  }
-
-  String _formatUpdatedAt() {
-    final updatedAt = _lastStatusUpdatedAt;
-    if (updatedAt == null) {
-      return '-';
-    }
-    return _formatClock(updatedAt);
-  }
-
-  String _formatClock(DateTime value) {
-    final updatedAt = value;
-    final hh = updatedAt.hour.toString().padLeft(2, '0');
-    final mm = updatedAt.minute.toString().padLeft(2, '0');
-    final ss = updatedAt.second.toString().padLeft(2, '0');
-    return '$hh:$mm:$ss';
   }
 
   String _buildPreviewUrl() {
