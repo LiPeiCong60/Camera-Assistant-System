@@ -30,6 +30,7 @@ import '../../utils/score_formatter.dart';
 import '../template/template_photo_dialog.dart';
 
 part 'parts/ai_scan_config_dialog.dart';
+part 'parts/device_capture_helpers.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_url_helpers.dart';
 part 'parts/device_link_widgets.dart';
@@ -2481,27 +2482,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         });
       }
     }
-  }
-
-  String _deviceCaptureFileName(String rawPath) {
-    final segments = rawPath.split(RegExp(r'[\\/]'));
-    final original = segments.isEmpty ? '' : segments.last.trim();
-    final fallback =
-        'device_capture_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final candidate = original.isEmpty ? fallback : original;
-    final safe = candidate.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    return safe.toLowerCase().endsWith('.jpg') ||
-            safe.toLowerCase().endsWith('.jpeg')
-        ? safe
-        : '$safe.jpg';
-  }
-
-  String _shortDeviceCaptureName(String rawPath) {
-    final filename = _deviceCaptureFileName(rawPath);
-    if (filename.length <= 14) {
-      return filename;
-    }
-    return '${filename.substring(0, 6)}...${filename.substring(filename.length - 7)}';
   }
 
   Future<void> _refreshStatusSilently() async {
