@@ -56,9 +56,33 @@ Planned split:
 - `parts/device_link_records.dart`: local records and persistence DTOs
 - `parts/ai_scan_config_dialog.dart`: AI scan parameter dialog
 - `parts/device_link_widgets.dart`: shared HUD and form widgets
+- `parts/device_capture_helpers.dart`: device capture file naming helpers
+- `parts/device_capture_records.dart`: device capture record list helpers
+- `parts/device_link_url_helpers.dart`: device and WebSocket URL builders
+- `parts/ai_result_formatters.dart`: AI result text formatters
+- `parts/device_polling_helpers.dart`: polling interval and time helpers
+- `parts/manual_control_helpers.dart`: joystick anchor helpers
+- `parts/mobile_push_*`: mobile push camera, socket, frame state, and encoding
+  helpers
 - `device_link_controller.dart`: polling, session lifecycle, mode changes
 - `mobile_push_controller.dart`: camera stream and mobile push WebSocket
 - `preview_stream_controller.dart`: preview WebSocket
+
+Current progress:
+
+- Latest checkpoint: `e2c3bb2 refactor: move manual control helpers`
+- `device_link_page.dart`: about 5212 lines after the current part-file pass
+- Existing part files: 14 files under
+  `mobile_client/lib/features/device_link/parts`
+- Recent validated checks: `git diff --check`, `flutter analyze`, and
+  `flutter test`
+
+Next low-risk targets:
+
+1. Move more pure display helpers, such as capture/source/action labels.
+2. Split HUD panels after the remaining logic helpers are clearer.
+3. Only then consider larger controller-oriented work for polling/session
+   lifecycle or mobile push orchestration.
 
 Acceptance:
 
