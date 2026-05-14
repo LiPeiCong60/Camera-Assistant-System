@@ -32,6 +32,7 @@ import '../template/template_photo_dialog.dart';
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_widgets.dart';
+part 'parts/mobile_push_state_actions.dart';
 part 'parts/mobile_push_tools.dart';
 part 'parts/preview_stream_controller.dart';
 
@@ -991,8 +992,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
     await _runAction(() async {
       setState(() {
-        _isStartingMobilePush = true;
-        _mobilePushErrorMessage = null;
+        _markMobilePushStarting();
       });
 
       try {
@@ -1003,7 +1003,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       } finally {
         if (mounted) {
           setState(() {
-            _isStartingMobilePush = false;
+            _markMobilePushStartFinished();
           });
         }
       }
@@ -1043,13 +1043,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       _status = status;
       _lastStatusUpdatedAt = DateTime.now();
       _webRtcSession = session;
-      _mobilePushCamera = camera;
-      _mobilePushLensDirection = camera.lensDirection;
-      _isMobilePushEnabled = true;
-      _mobilePushFrameCount = 0;
-      _lastMobilePushFrameSentAtMs = 0;
-      _lastMobilePushUiUpdateAtMs = 0;
-      _lastMobilePushFrameAt = DateTime.now();
+      _markMobilePushStarted(camera: camera, lastFrameAt: DateTime.now());
       _syncMessage = '手机画面 WebRTC 推流已启动。';
       _addActionRecord('system', '手机画面 WebRTC 推流已启动。');
     });
@@ -1064,7 +1058,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final camera = await _preferredMobilePushCamera();
     _mobilePushCamera = camera;
     _mobilePushLensDirection = camera.lensDirection;
-    _mobilePushRotationDegrees = -1;
+    _resetMobilePushFrameConfig();
     final controller = CameraController(
       camera,
       ResolutionPreset.low,
@@ -1086,11 +1080,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     setState(() {
       _status = status;
       _lastStatusUpdatedAt = DateTime.now();
-      _isMobilePushEnabled = true;
-      _mobilePushFrameCount = 0;
-      _lastMobilePushFrameSentAtMs = 0;
-      _lastMobilePushUiUpdateAtMs = 0;
-      _lastMobilePushFrameAt = null;
+      _markMobilePushStarted(camera: camera, lastFrameAt: null);
     });
     await _rememberCurrentConnection();
     unawaited(_startPreviewStream());
@@ -1166,8 +1156,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
           : CameraLensDirection.front;
       await _runAction(() async {
         setState(() {
-          _isStartingMobilePush = true;
-          _mobilePushErrorMessage = null;
+          _markMobilePushStarting();
         });
         try {
           await _stopMobilePush(silent: true);
@@ -1175,7 +1164,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         } finally {
           if (mounted) {
             setState(() {
-              _isStartingMobilePush = false;
+              _markMobilePushStartFinished();
             });
           }
         }
@@ -1185,8 +1174,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
     await _runAction(() async {
       setState(() {
-        _isStartingMobilePush = true;
-        _mobilePushErrorMessage = null;
+        _markMobilePushStarting();
       });
 
       try {
@@ -1239,10 +1227,10 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         }
         rethrow;
       } finally {
-        _isPushingMobileFrame = false;
+        _markMobilePushFrameSendFinished();
         if (mounted) {
           setState(() {
-            _isStartingMobilePush = false;
+            _markMobilePushStartFinished();
           });
         }
       }
@@ -1250,14 +1238,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
   }
 
   Future<void> _stopMobilePush({bool silent = false}) async {
-    _isMobilePushEnabled = false;
-    _isPushingMobileFrame = false;
-    _isHandlingMobilePushOrientationChange = false;
-    _mobilePushConfigSent = false;
-    _mobilePushCamera = null;
-    _mobilePushRotationDegrees = -1;
-    _lastMobilePushFrameSentAtMs = 0;
-    _lastMobilePushUiUpdateAtMs = 0;
+    _resetMobilePushTransportState();
 
     await _stopWebRtcSession();
 
@@ -1330,16 +1311,13 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     final camera = _mobilePushCamera;
     final currentController = _mobilePushCameraController;
     if (!_isMobilePushEnabled || camera == null || currentController == null) {
-      _mobilePushConfigSent = false;
-      _mobilePushRotationDegrees = -1;
+      _resetMobilePushFrameConfig();
       return;
     }
 
-    _isHandlingMobilePushOrientationChange = true;
-    _isPushingMobileFrame = false;
+    _beginMobilePushOrientationChange();
     if (mounted) {
       setState(() {
-        _mobilePushErrorMessage = null;
         _syncMessage = '屏幕方向变化，正在重新校正手机推流画面。';
       });
       _previewStreamController.clear(clearError: false);
@@ -1364,8 +1342,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       }
 
       _mobilePushCameraController = nextController;
-      _mobilePushRotationDegrees = -1;
-      _mobilePushConfigSent = false;
+      _resetMobilePushFrameConfig();
       await nextController.startImageStream(_handleMobilePushFrame);
       unawaited(_startPreviewStream());
 
@@ -1379,32 +1356,28 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _setMobilePushError('屏幕方向变化后重新初始化推流失败，请停止后再启动。');
       }
     } finally {
-      _isHandlingMobilePushOrientationChange = false;
+      _finishMobilePushOrientationChange();
     }
   }
 
   void _handleMobilePushFrame(CameraImage image) {
     final socket = _mobilePushSocket;
-    if (!_isMobilePushEnabled ||
-        _isPushingMobileFrame ||
-        socket == null ||
-        socket.readyState != WebSocket.open ||
-        image.planes.isEmpty) {
+    if (!_shouldSendMobilePushFrame(socket: socket, image: image)) {
       return;
     }
+    final openSocket = socket!;
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    if (nowMs - _lastMobilePushFrameSentAtMs <
-        _mobilePushFrameThrottle.inMilliseconds) {
+    if (_isMobilePushFrameThrottled(nowMs)) {
       return;
     }
 
     try {
-      _isPushingMobileFrame = true;
+      _markMobilePushFrameSending();
       final rotationDegrees = _mobilePushRotationForCurrentFrame();
       if (!_mobilePushConfigSent ||
           rotationDegrees != _mobilePushRotationDegrees) {
-        socket.add(
+        openSocket.add(
           _MobilePushTools.buildNv21ConfigJson(
             image: image,
             rotationDegrees: rotationDegrees,
@@ -1418,18 +1391,12 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         _setMobilePushError('当前相机格式暂不支持旧版推流，请使用 Android NV21 摄像头格式。');
         return;
       }
-      socket.add(frameBytes);
-      _lastMobilePushFrameSentAtMs = nowMs;
-      _mobilePushFrameCount += 1;
+      openSocket.add(frameBytes);
+      _markMobilePushFrameSent(nowMs);
 
-      final shouldUpdateUi =
-          nowMs - _lastMobilePushUiUpdateAtMs >=
-          const Duration(milliseconds: 300).inMilliseconds;
-      if (mounted && shouldUpdateUi) {
+      if (mounted && _shouldRefreshMobilePushFrameUi(nowMs)) {
         setState(() {
-          _lastMobilePushFrameAt = DateTime.now();
-          _lastMobilePushUiUpdateAtMs = nowMs;
-          _mobilePushErrorMessage = null;
+          _markMobilePushFrameUiUpdated(nowMs);
         });
       }
     } on ApiException catch (error) {
@@ -1437,7 +1404,7 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     } catch (_) {
       _setMobilePushError('手机画面推送失败，请检查设备运行时地址和网络连接。');
     } finally {
-      _isPushingMobileFrame = false;
+      _markMobilePushFrameSendFinished();
     }
   }
 
