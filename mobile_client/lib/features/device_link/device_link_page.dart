@@ -31,6 +31,7 @@ import '../template/template_photo_dialog.dart';
 
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_capture_helpers.dart';
+part 'parts/device_capture_records.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_link_url_helpers.dart';
 part 'parts/device_link_widgets.dart';
@@ -2241,41 +2242,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       RegExp(r'_([a-z])'),
       (match) => match.group(1)!.toUpperCase(),
     );
-  }
-
-  void _rememberDeviceCapturePath(String? path, {required String source}) {
-    final normalizedPath = path?.trim();
-    if (normalizedPath == null || normalizedPath.isEmpty) {
-      return;
-    }
-    _lastCapturePath = normalizedPath;
-    final existingIndex = _captureRecords.indexWhere(
-      (record) => record.path == normalizedPath,
-    );
-    if (existingIndex >= 0) {
-      final existing = _captureRecords.removeAt(existingIndex);
-      _captureRecords.insert(
-        0,
-        existing.copyWith(
-          backendCaptureId:
-              existing.backendCaptureId ??
-              _deviceHistoryCaptureIds[normalizedPath],
-        ),
-      );
-      return;
-    }
-    _captureRecords.insert(
-      0,
-      _DeviceCaptureRecord(
-        path: normalizedPath,
-        createdAt: DateTime.now(),
-        source: source,
-        backendCaptureId: _deviceHistoryCaptureIds[normalizedPath],
-      ),
-    );
-    if (_captureRecords.length > 12) {
-      _captureRecords.removeRange(12, _captureRecords.length);
-    }
   }
 
   Future<void> _syncDeviceCaptureFiles() async {
