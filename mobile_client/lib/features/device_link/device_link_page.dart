@@ -35,6 +35,7 @@ part 'parts/device_capture_helpers.dart';
 part 'parts/device_capture_records.dart';
 part 'parts/device_link_records.dart';
 part 'parts/device_polling_helpers.dart';
+part 'parts/device_display_helpers.dart';
 part 'parts/device_link_url_helpers.dart';
 part 'parts/device_link_widgets.dart';
 part 'parts/mobile_push_camera_actions.dart';
@@ -2547,43 +2548,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
   }
 
-  String _formatDateTime(DateTime value) {
-    final month = value.month.toString().padLeft(2, '0');
-    final day = value.day.toString().padLeft(2, '0');
-    final hh = value.hour.toString().padLeft(2, '0');
-    final mm = value.minute.toString().padLeft(2, '0');
-    final ss = value.second.toString().padLeft(2, '0');
-    return '$month-$day $hh:$mm:$ss';
-  }
-
-  String _captureDisplayName(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    final segments = normalized.split('/');
-    return segments.isEmpty ? path : segments.last;
-  }
-
-  String _captureSourceLabel(String source) {
-    switch (source) {
-      case 'device_runtime':
-        return '设备抓拍';
-      default:
-        return source;
-    }
-  }
-
-  String _actionCategoryLabel(String category) {
-    switch (category) {
-      case 'error':
-        return '错误';
-      case 'system':
-        return '系统';
-      case 'capture':
-        return '抓拍';
-      default:
-        return category;
-    }
-  }
-
   void _addActionRecord(String category, String message) {
     _actionRecords.insert(
       0,
@@ -2711,26 +2675,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
 
   void _returnToCameraPage() {
     Navigator.of(context).pop<DeviceLinkResult>(_buildReturnResult());
-  }
-
-  String _statusHeadline() {
-    if (_status?.sessionOpened == true) {
-      return '设备会话运行中。';
-    }
-    if (_health != null) {
-      return '设备服务可访问。';
-    }
-    return '等待连接设备';
-  }
-
-  String _statusDescription() {
-    if (_status?.sessionOpened == true) {
-      return '当前会话  已打开，可继续执行控制、模板下发和 AI 动作。';
-    }
-    if (_health != null) {
-      return '本地设备运行时已启动，但当前还没有打开设备会话。';
-    }
-    return '先填写设备地址和视频流地址，再执行健康检查或打开会话。';
   }
 
   Widget _buildStatusOverviewSection(BuildContext context) {
@@ -3169,30 +3113,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
         ),
       ],
     );
-  }
-
-  String _modeDisplayLabel(String mode) {
-    switch (mode) {
-      case 'MANUAL':
-        return '手动控制';
-      case 'AUTO_TRACK':
-        return '自动跟随';
-      case 'SMART_COMPOSE':
-        return '模板构图';
-      default:
-        return mode;
-    }
-  }
-
-  String _followModeDisplayLabel(String mode) {
-    switch (mode) {
-      case 'shoulders':
-        return '肩部跟随';
-      case 'face':
-        return '人脸跟随';
-      default:
-        return mode;
-    }
   }
 
   Widget _buildModeGroup({
