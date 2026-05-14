@@ -31,6 +31,7 @@ import '../template/template_photo_dialog.dart';
 
 part 'parts/ai_scan_config_dialog.dart';
 part 'parts/device_link_records.dart';
+part 'parts/device_link_url_helpers.dart';
 part 'parts/device_link_widgets.dart';
 part 'parts/mobile_push_camera_actions.dart';
 part 'parts/mobile_push_socket_sender.dart';
@@ -1375,28 +1376,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
     );
   }
 
-  Uri _buildDeviceWebSocketUri(String path) {
-    final withoutApi = _normalizedDeviceBaseUrl(_baseUrlController.text);
-    final uri = Uri.parse(withoutApi);
-    final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
-    final basePath = uri.path.endsWith('/')
-        ? uri.path.substring(0, uri.path.length - 1)
-        : uri.path;
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    return uri.replace(scheme: scheme, path: '$basePath$normalizedPath');
-  }
-
-  String _normalizedDeviceBaseUrl(String rawBaseUrl) {
-    var normalized = rawBaseUrl.trim();
-    if (normalized.endsWith('/')) {
-      normalized = normalized.substring(0, normalized.length - 1);
-    }
-    if (normalized.endsWith('/api')) {
-      normalized = normalized.substring(0, normalized.length - 4);
-    }
-    return normalized;
-  }
-
   void _setMobilePushError(String message) {
     if (!mounted) {
       return;
@@ -2523,38 +2502,6 @@ class _DeviceLinkPageState extends State<DeviceLinkPage> {
       return filename;
     }
     return '${filename.substring(0, 6)}...${filename.substring(filename.length - 7)}';
-  }
-
-  String _deviceCaptureFileUrl(String rawPath) {
-    final normalizedBaseUrl = _normalizedDeviceBaseUrl(_baseUrlController.text);
-    return Uri.parse(
-      '$normalizedBaseUrl/api/device/capture/file',
-    ).replace(queryParameters: <String, String>{'path': rawPath}).toString();
-  }
-
-  String _deviceTemplateImageUrl(DeviceTemplateSummary template) {
-    final normalizedBaseUrl = _normalizedDeviceBaseUrl(_baseUrlController.text);
-    return Uri.parse(
-      '$normalizedBaseUrl/api/device/templates/${Uri.encodeComponent(template.id)}/image',
-    ).toString();
-  }
-
-  String? _templatePreviewImageUrl(TemplateSummary template) {
-    final rawUrl = template.previewImageUrl?.trim();
-    if (rawUrl == null || rawUrl.isEmpty) {
-      return null;
-    }
-    final uri = Uri.tryParse(rawUrl);
-    if (uri != null && uri.hasScheme) {
-      return rawUrl;
-    }
-
-    final apiBaseUrl = AppConfig.apiBaseUrl;
-    final origin = apiBaseUrl.endsWith('/api')
-        ? apiBaseUrl.substring(0, apiBaseUrl.length - 4)
-        : apiBaseUrl;
-    final path = rawUrl.startsWith('/') ? rawUrl : '/$rawUrl';
-    return '$origin$path';
   }
 
   Future<void> _refreshStatusSilently() async {
