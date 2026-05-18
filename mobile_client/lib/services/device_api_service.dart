@@ -14,11 +14,13 @@ class DeviceCaptureTriggerResult {
     required this.path,
     this.analysis,
     this.analysisError,
+    this.mobileCaptureRequest,
   });
 
   final String path;
   final Map<String, dynamic>? analysis;
   final String? analysisError;
+  final DeviceMobileCaptureRequestSummary? mobileCaptureRequest;
 }
 
 class DeviceCaptureFileSummary {
@@ -108,12 +110,13 @@ class DeviceApiService {
       sessionOpened: true,
       sessionCode: data['session_code'] as String?,
       streamUrl: data['stream_url'] as String?,
-      mode: data['mode'] as String? ?? startMode,
+      mode: data['start_mode'] as String? ?? startMode,
       followMode: null,
       deviceStatus: 'online',
       currentPan: 0,
       currentTilt: 0,
       loopRunning: true,
+      previewSource: data['preview_source'] as String?,
     );
   }
 
@@ -171,6 +174,18 @@ class DeviceApiService {
     return getStatus(baseUrl: baseUrl);
   }
 
+  Future<DeviceStatusSummary> setSensitivity({
+    required String baseUrl,
+    required double sensitivity,
+  }) async {
+    await _postJson(
+      baseUrl,
+      '/api/device/control/sensitivity',
+      <String, dynamic>{'sensitivity': sensitivity},
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
   Future<DeviceStatusSummary> home({required String baseUrl}) async {
     await _postJson(baseUrl, '/api/device/control/home', <String, dynamic>{});
     return getStatus(baseUrl: baseUrl);
@@ -186,6 +201,62 @@ class DeviceApiService {
       <String, dynamic>{'follow_mode': followMode},
     );
     return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<DeviceStatusSummary> trackTarget({
+    required String baseUrl,
+    required String targetType,
+    required double targetX,
+    required double targetY,
+    double desiredX = 0.5,
+    double desiredY = 0.5,
+    double confidence = 1,
+    String source = 'main_phone',
+    Map<String, dynamic> frame = const <String, dynamic>{},
+    int? timestampMs,
+  }) async {
+    await sendTrackTargetCommand(
+      baseUrl: baseUrl,
+      targetType: targetType,
+      targetX: targetX,
+      targetY: targetY,
+      desiredX: desiredX,
+      desiredY: desiredY,
+      confidence: confidence,
+      source: source,
+      frame: frame,
+      timestampMs: timestampMs,
+    );
+    return getStatus(baseUrl: baseUrl);
+  }
+
+  Future<void> sendTrackTargetCommand({
+    required String baseUrl,
+    required String targetType,
+    required double targetX,
+    required double targetY,
+    double desiredX = 0.5,
+    double desiredY = 0.5,
+    double confidence = 1,
+    String source = 'main_phone',
+    Map<String, dynamic> frame = const <String, dynamic>{},
+    int? timestampMs,
+  }) async {
+    await _postJson(
+      baseUrl,
+      '/api/device/control/track-target',
+      <String, dynamic>{
+        'target_type': targetType,
+        'target_x': _clampUnit(targetX),
+        'target_y': _clampUnit(targetY),
+        'desired_x': _clampUnit(desiredX),
+        'desired_y': _clampUnit(desiredY),
+        'confidence': _clampUnit(confidence),
+        'source': source,
+        'frame': frame,
+        'timestamp_ms': timestampMs ?? DateTime.now().millisecondsSinceEpoch,
+      },
+    );
   }
 
   Future<DeviceStatusSummary> restartStream({
@@ -383,7 +454,30 @@ class DeviceApiService {
       path: data['capture_path'] as String? ?? '',
       analysis: data['analysis'] as Map<String, dynamic>?,
       analysisError: data['analysis_error'] as String?,
+      mobileCaptureRequest: DeviceMobileCaptureRequestSummary.fromJson(
+        data['mobile_capture_request'] as Map<String, dynamic>?,
+      ),
     );
+  }
+
+  Future<DeviceStatusSummary> acknowledgeMobileCapture({
+    required String baseUrl,
+    required String requestId,
+    bool success = true,
+    String? localPath,
+    String? error,
+  }) async {
+    final data = await _postJson(
+      baseUrl,
+      '/api/device/capture/mobile-ack',
+      <String, dynamic>{
+        'request_id': requestId,
+        'success': success,
+        'local_path': ?localPath,
+        'error': ?error,
+      },
+    );
+    return DeviceStatusSummary.fromJson(data);
   }
 
   Future<List<DeviceCaptureFileSummary>> listCaptureFiles({
@@ -434,6 +528,26 @@ class DeviceApiService {
         file.path,
         filename: 'mobile_frame.jpg',
       ),
+    );
+
+    final response = await _send(() async {
+      final streamed = await request.send();
+      return http.Response.fromStream(streamed);
+    });
+    _decodeEnvelope(response);
+  }
+
+  Future<void> pushMobileFrameBytes({
+    required String baseUrl,
+    required List<int> bytes,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${_normalizeBaseUrl(baseUrl)}/api/device/stream/frame'),
+    );
+    request.headers['Accept'] = 'application/json';
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: 'mobile_frame.jpg'),
     );
 
     final response = await _send(() async {
@@ -520,6 +634,10 @@ class DeviceApiService {
       normalized = normalized.substring(0, normalized.length - 4);
     }
     return normalized;
+  }
+
+  double _clampUnit(double value) {
+    return value.clamp(0, 1).toDouble();
   }
 
   Map<String, dynamic> _decodeEnvelope(http.Response response) {

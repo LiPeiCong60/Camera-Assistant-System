@@ -14,7 +14,7 @@ class CaptureSession(TimestampMixin, Base):
     __tablename__ = "capture_sessions"
     __table_args__ = (
         CheckConstraint(
-            "mode IN ('mobile_only', 'device_link', 'MANUAL', 'AUTO_TRACK', 'SMART_COMPOSE')",
+            "mode IN ('mobile_only', 'gimbal_manual', 'gimbal_follow', 'gimbal_template', 'ai_auto_angle', 'ai_background')",
             name="chk_capture_sessions_mode",
         ),
         CheckConstraint("status IN ('opened', 'closed', 'cancelled')", name="chk_capture_sessions_status"),

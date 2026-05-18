@@ -14,16 +14,27 @@ extension _DeviceLinkMobilePushStateActions on _DeviceLinkPageState {
     _mobilePushFrameCount = 0;
     _lastMobilePushFrameSentAtMs = 0;
     _lastMobilePushUiUpdateAtMs = 0;
+    _lastMobileTrackTargetSentAtMs = 0;
+    _consecutiveMobilePoseMisses = 0;
     _lastMobilePushFrameAt = lastFrameAt;
   }
 
   void _resetMobilePushTransportState() {
     _isMobilePushEnabled = false;
     _isPushingMobileFrame = false;
+    _isProcessingMobileTrackTarget = false;
+    _useMobilePushHttpFallback = false;
     _isHandlingMobilePushOrientationChange = false;
+    _isDeviceLinkRecordingVideo = false;
+    _isDeviceLinkRecordingPreviewPaused = false;
+    _isFinalizingDeviceLinkVideo = false;
+    _deviceLinkRecordingPreviewBytes = null;
+    _deviceLinkRecordingStartedAt = null;
     _mobilePushConfigSent = false;
     _mobilePushCamera = null;
     _mobilePushRotationDegrees = -1;
+    _latestMobileVisionOverlay = null;
+    _lastRecordingPreviewFrameAtMs = 0;
     _resetMobilePushFrameStats();
   }
 
@@ -34,6 +45,8 @@ extension _DeviceLinkMobilePushStateActions on _DeviceLinkPageState {
     _mobilePushCamera = camera;
     _mobilePushLensDirection = camera.lensDirection;
     _isMobilePushEnabled = true;
+    _useMobilePushHttpFallback = false;
+    _latestMobileVisionOverlay = null;
     _resetMobilePushFrameStats(lastFrameAt: lastFrameAt);
   }
 
@@ -58,13 +71,15 @@ extension _DeviceLinkMobilePushStateActions on _DeviceLinkPageState {
   }) {
     return _isMobilePushEnabled &&
         !_isPushingMobileFrame &&
-        sender.isOpen &&
+        (sender.isOpen || _status?.sessionOpened == true) &&
         image.planes.isNotEmpty;
   }
 
   bool _isMobilePushFrameThrottled(int nowMs) {
-    return nowMs - _lastMobilePushFrameSentAtMs <
-        _DeviceLinkPageState._mobilePushFrameThrottle.inMilliseconds;
+    final interval = _useMobilePushHttpFallback
+        ? _DeviceLinkPageState._mobilePushHttpFallbackFrameThrottle
+        : _DeviceLinkPageState._mobilePushFrameThrottle;
+    return nowMs - _lastMobilePushFrameSentAtMs < interval.inMilliseconds;
   }
 
   void _markMobilePushFrameSending() {

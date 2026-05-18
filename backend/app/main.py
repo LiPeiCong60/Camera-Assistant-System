@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.router import api_router
 from backend.app.core.config import get_settings
+from backend.app.core.db import init_database
 from backend.app.core.errors import register_exception_handlers
 
 
@@ -28,6 +29,8 @@ def create_app() -> FastAPI:
     app.mount(settings.uploads_url_path, StaticFiles(directory=uploads_dir), name="uploads")
     app.include_router(api_router)
     register_exception_handlers(app)
+    if settings.database_url:
+        init_database(settings.database_url)
     return app
 
 

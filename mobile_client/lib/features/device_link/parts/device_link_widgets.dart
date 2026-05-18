@@ -648,6 +648,7 @@ class _TemplatePreviewCard extends StatelessWidget {
     this.imageUrl,
     this.meta,
     this.dark = false,
+    this.onDelete,
   });
 
   final String name;
@@ -656,6 +657,7 @@ class _TemplatePreviewCard extends StatelessWidget {
   final bool selected;
   final bool dark;
   final VoidCallback? onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -733,6 +735,15 @@ class _TemplatePreviewCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                  if (onDelete != null)
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: _TemplateDeleteButton(
+                        dark: dark,
+                        onPressed: onDelete!,
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -760,6 +771,38 @@ class _TemplatePreviewCard extends StatelessWidget {
                 ),
               ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TemplateDeleteButton extends StatelessWidget {
+  const _TemplateDeleteButton({required this.dark, required this.onPressed});
+
+  final bool dark;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '删除模板',
+      child: Material(
+        color: dark
+            ? Colors.black.withValues(alpha: 0.52)
+            : Colors.white.withValues(alpha: 0.90),
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Icon(
+              Icons.delete_outline,
+              size: 15,
+              color: dark ? Colors.white : const Color(0xFFB42318),
+            ),
           ),
         ),
       ),

@@ -6,6 +6,7 @@ class DeviceTemplateSummary {
     required this.createdAt,
     required this.bboxNorm,
     required this.posePointCount,
+    this.templateData = const <String, dynamic>{},
     this.selected = false,
   });
 
@@ -15,6 +16,7 @@ class DeviceTemplateSummary {
   final String createdAt;
   final List<double> bboxNorm;
   final int posePointCount;
+  final Map<String, dynamic> templateData;
   final bool selected;
 
   factory DeviceTemplateSummary.fromJson(Map<String, dynamic> json) {
@@ -28,6 +30,9 @@ class DeviceTemplateSummary {
           .map((value) => value.toDouble())
           .toList(growable: false),
       posePointCount: (json['pose_point_count'] as num?)?.toInt() ?? 0,
+      templateData: json['template_data'] is Map
+          ? Map<String, dynamic>.from(json['template_data'] as Map)
+          : const <String, dynamic>{},
       selected: json['selected'] as bool? ?? false,
     );
   }

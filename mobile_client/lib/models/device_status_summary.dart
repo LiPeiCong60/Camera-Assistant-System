@@ -9,12 +9,14 @@ class DeviceStatusSummary {
     required this.currentPan,
     required this.currentTilt,
     required this.loopRunning,
+    this.previewSource,
     this.selectedTemplateId,
     this.templateStatus = const DeviceTemplateStatusSummary(),
     this.trackingStatus = const DeviceTrackingStatusSummary(),
     this.overlayStatus = const DeviceOverlayStatusSummary(),
     this.gestureStatus = const DeviceGestureStatusSummary(),
     this.latestCapture = const DeviceLatestCaptureSummary(),
+    this.mobileCaptureRequest,
     this.aiStatus = const DeviceAiStatusSummary(),
     this.runtimeConfig = const DeviceRuntimeConfigSummary(),
     this.aiLockEnabled = false,
@@ -31,12 +33,14 @@ class DeviceStatusSummary {
   final double currentPan;
   final double currentTilt;
   final bool loopRunning;
+  final String? previewSource;
   final String? selectedTemplateId;
   final DeviceTemplateStatusSummary templateStatus;
   final DeviceTrackingStatusSummary trackingStatus;
   final DeviceOverlayStatusSummary overlayStatus;
   final DeviceGestureStatusSummary gestureStatus;
   final DeviceLatestCaptureSummary latestCapture;
+  final DeviceMobileCaptureRequestSummary? mobileCaptureRequest;
   final DeviceAiStatusSummary aiStatus;
   final DeviceRuntimeConfigSummary runtimeConfig;
   final bool aiLockEnabled;
@@ -54,12 +58,14 @@ class DeviceStatusSummary {
       sessionOpened: json['session_opened'] as bool? ?? false,
       sessionCode: json['session_code'] as String?,
       streamUrl: json['stream_url'] as String?,
-      mode: json['mode'] as String? ?? 'MANUAL',
+      mode:
+          json['start_mode'] as String? ?? json['mode'] as String? ?? 'MANUAL',
       followMode: json['follow_mode'] as String?,
       deviceStatus: json['device_status'] as String? ?? 'unknown',
       currentPan: (json['current_pan'] as num?)?.toDouble() ?? 0,
       currentTilt: (json['current_tilt'] as num?)?.toDouble() ?? 0,
       loopRunning: json['loop_running'] as bool? ?? false,
+      previewSource: json['preview_source'] as String?,
       selectedTemplateId: selectedTemplateId?.toString(),
       templateStatus: DeviceTemplateStatusSummary.fromJson(
         json['template_status'] as Map<String, dynamic>?,
@@ -75,6 +81,9 @@ class DeviceStatusSummary {
       ),
       latestCapture: DeviceLatestCaptureSummary.fromJson(
         json['latest_capture'] as Map<String, dynamic>?,
+      ),
+      mobileCaptureRequest: DeviceMobileCaptureRequestSummary.fromJson(
+        json['mobile_capture_request'] as Map<String, dynamic>?,
       ),
       aiStatus: aiStatus,
       runtimeConfig: DeviceRuntimeConfigSummary.fromJson(
@@ -189,6 +198,7 @@ class DeviceGestureStatusSummary {
     this.handCount = 0,
     this.lastEvent,
     this.lastCaptureError,
+    this.captureInProgress = false,
     this.captureCountdownActive = false,
     this.captureCountdownRemainingSeconds,
     this.captureCountdownEvent,
@@ -203,6 +213,7 @@ class DeviceGestureStatusSummary {
   final int handCount;
   final String? lastEvent;
   final String? lastCaptureError;
+  final bool captureInProgress;
   final bool captureCountdownActive;
   final double? captureCountdownRemainingSeconds;
   final String? captureCountdownEvent;
@@ -223,11 +234,55 @@ class DeviceGestureStatusSummary {
       handCount: (json['hand_count'] as num?)?.toInt() ?? 0,
       lastEvent: json['last_event'] as String?,
       lastCaptureError: json['last_capture_error'] as String?,
+      captureInProgress:
+          json['capture_in_progress'] as bool? ??
+          countdown?['capture_in_progress'] as bool? ??
+          false,
       captureCountdownActive: countdown?['active'] as bool? ?? false,
       captureCountdownRemainingSeconds: (countdown?['remaining_s'] as num?)
           ?.toDouble(),
       captureCountdownEvent: countdown?['event'] as String?,
       captureCountdownReason: countdown?['reason'] as String?,
+    );
+  }
+}
+
+class DeviceMobileCaptureRequestSummary {
+  const DeviceMobileCaptureRequestSummary({
+    required this.id,
+    this.sequence = 0,
+    this.reason,
+    this.autoAnalyze = false,
+    this.status = 'pending',
+    this.requestedAt,
+  });
+
+  final String id;
+  final int sequence;
+  final String? reason;
+  final bool autoAnalyze;
+  final String status;
+  final DateTime? requestedAt;
+
+  bool get isPending => status == 'pending';
+
+  static DeviceMobileCaptureRequestSummary? fromJson(
+    Map<String, dynamic>? json,
+  ) {
+    if (json == null) {
+      return null;
+    }
+    final id = json['id']?.toString().trim();
+    if (id == null || id.isEmpty) {
+      return null;
+    }
+    return DeviceMobileCaptureRequestSummary(
+      id: id,
+      sequence: (json['sequence'] as num?)?.toInt() ?? 0,
+      reason: json['reason'] as String?,
+      autoAnalyze: json['auto_analyze'] as bool? ?? false,
+      status: json['status'] as String? ?? 'pending',
+      requestedAt: _readTimestamp(json['requested_at']),
     );
   }
 }

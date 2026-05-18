@@ -33,23 +33,28 @@ class CameraOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final staticTransform = PreviewTransform(viewportSize: size);
+    final dynamicTransform = PreviewTransform(
+      viewportSize: size,
+      mirrorX: mirrorDynamicOverlays,
+    );
     if (settings.showTemplateBox) {
-      _paintTemplateBox(canvas, size);
+      _paintTemplateBox(canvas, staticTransform);
     }
     if (settings.showTemplate) {
-      _paintTemplateLines(canvas, size);
+      _paintTemplateLines(canvas, staticTransform);
     }
     if (settings.showBodyBox) {
-      _paintBodyBox(canvas, size);
+      _paintBodyBox(canvas, dynamicTransform);
     }
     if (settings.showSkeleton) {
-      _paintSkeleton(canvas, size);
+      _paintSkeleton(canvas, dynamicTransform);
     }
   }
 
-  void _paintTemplateBox(Canvas canvas, Size size) {
+  void _paintTemplateBox(Canvas canvas, PreviewTransform transform) {
     if (scene.hasTemplateBox) {
-      final boxRect = _rectFromNormalizedRect(scene.templateBox, size);
+      final boxRect = transform.rectToViewport(scene.templateBox);
       if (boxRect.width > 0 && boxRect.height > 0) {
         final boxPaint = Paint()
           ..style = PaintingStyle.stroke
@@ -63,7 +68,7 @@ class CameraOverlayPainter extends CustomPainter {
     }
   }
 
-  void _paintTemplateLines(Canvas canvas, Size size) {
+  void _paintTemplateLines(Canvas canvas, PreviewTransform transform) {
     final templateLinePaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
@@ -71,8 +76,8 @@ class CameraOverlayPainter extends CustomPainter {
 
     for (final segment in scene.templateSegments) {
       canvas.drawLine(
-        _offsetFromPoint(segment.start, size),
-        _offsetFromPoint(segment.end, size),
+        transform.pointToViewport(segment.start),
+        transform.pointToViewport(segment.end),
         templateLinePaint,
       );
     }
@@ -83,29 +88,20 @@ class CameraOverlayPainter extends CustomPainter {
         ..color = const Color(0xFFE0A458);
       for (final segment in scene.templateSegments) {
         canvas.drawCircle(
-          _offsetFromPoint(segment.start, size),
+          transform.pointToViewport(segment.start),
           3.2,
           jointPaint,
         );
-        canvas.drawCircle(_offsetFromPoint(segment.end, size), 3.2, jointPaint);
+        canvas.drawCircle(
+          transform.pointToViewport(segment.end),
+          3.2,
+          jointPaint,
+        );
       }
     }
   }
 
-  Rect _rectFromNormalizedRect(NormalizedRect rect, Size size) {
-    final left = _clamp01(rect.left) * size.width;
-    final top = _clamp01(rect.top) * size.height;
-    final right = _clamp01(rect.left + rect.width) * size.width;
-    final bottom = _clamp01(rect.top + rect.height) * size.height;
-    return Rect.fromLTRB(
-      left < right ? left : right,
-      top < bottom ? top : bottom,
-      right > left ? right : left,
-      bottom > top ? bottom : top,
-    );
-  }
-
-  void _paintBodyBox(Canvas canvas, Size size) {
+  void _paintBodyBox(Canvas canvas, PreviewTransform transform) {
     if (!scene.hasBodyBox) {
       return;
     }
@@ -114,15 +110,7 @@ class CameraOverlayPainter extends CustomPainter {
       ..strokeWidth = 2.6
       ..color = const Color(0xFF00D084);
 
-    final left = _resolveBodyBoxLeft(size);
-    final top = _clamp01(scene.bodyBox.top) * size.height;
-    final normalizedRight = mirrorDynamicOverlays
-        ? 1 - scene.bodyBox.left
-        : scene.bodyBox.left + scene.bodyBox.width;
-    final right = _clamp01(normalizedRight) * size.width;
-    final bottom =
-        _clamp01(scene.bodyBox.top + scene.bodyBox.height) * size.height;
-    final rect = Rect.fromLTRB(left, top, right, bottom);
+    final rect = transform.rectToViewport(scene.bodyBox);
     if (rect.width <= 0 || rect.height <= 0) {
       return;
     }
@@ -132,7 +120,7 @@ class CameraOverlayPainter extends CustomPainter {
     );
   }
 
-  void _paintSkeleton(Canvas canvas, Size size) {
+  void _paintSkeleton(Canvas canvas, PreviewTransform transform) {
     if (!scene.hasSkeleton) {
       return;
     }
@@ -155,8 +143,8 @@ class CameraOverlayPainter extends CustomPainter {
         continue;
       }
       canvas.drawLine(
-        _offsetFromPoint(start, size, mirrored: mirrorDynamicOverlays),
-        _offsetFromPoint(end, size, mirrored: mirrorDynamicOverlays),
+        transform.pointToViewport(start),
+        transform.pointToViewport(end),
         segmentPaint,
       );
     }
@@ -165,25 +153,6 @@ class CameraOverlayPainter extends CustomPainter {
   bool _isDrawablePoint(NormalizedPoint point) {
     return point.x.isFinite && point.y.isFinite;
   }
-
-  double _resolveBodyBoxLeft(Size size) {
-    final normalizedLeft = mirrorDynamicOverlays
-        ? 1 - scene.bodyBox.left - scene.bodyBox.width
-        : scene.bodyBox.left;
-    return _clamp01(normalizedLeft) * size.width;
-  }
-
-  Offset _offsetFromPoint(
-    NormalizedPoint point,
-    Size size, {
-    bool mirrored = false,
-  }) {
-    final normalizedX = _clamp01(mirrored ? 1 - point.x : point.x);
-    final normalizedY = _clamp01(point.y);
-    return Offset(normalizedX * size.width, normalizedY * size.height);
-  }
-
-  double _clamp01(double value) => value.clamp(0.0, 1.0);
 
   @override
   bool shouldRepaint(covariant CameraOverlayPainter oldDelegate) {

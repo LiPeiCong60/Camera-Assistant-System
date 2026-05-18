@@ -51,4 +51,4 @@ cd backend
 python init_db.py
 ```
 
-注意：ORM 和兼容补丁当前允许 `capture_type='device_link'`。如果手动维护 `database/schema.sql`，需要确保约束与 ORM 保持一致。
+注意：`capture_type='photo'` 和 `capture_type='device_link'` 仅作为旧客户端兼容输入；兼容补丁会在入库约束前映射为 canonical `single`，并把语义写入 `metadata`。

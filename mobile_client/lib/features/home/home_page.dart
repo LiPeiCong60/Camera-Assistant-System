@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../models/auth_session.dart';
 import '../../models/plan_summary.dart';
-import '../../models/subscription_info.dart';
 import '../../models/template_summary.dart';
 import '../../services/api_client.dart';
+import '../../services/gallery_save_service.dart';
 import '../auth/auth_controller.dart';
 import '../camera/camera_capture_page.dart';
 import '../device_link/device_link_page.dart';
 import '../history/history_page.dart';
+import '../settings/detailed_settings_page.dart';
 import '../template/template_photo_dialog.dart';
 import 'plan_detail_page.dart';
 
@@ -156,9 +157,7 @@ class HomePage extends StatelessWidget {
                       child: _StatusCard(
                         title: '当前订阅',
                         value: _subscriptionStatusLabel(controller),
-                        note: currentPlan == null
-                            ? '点击查看套餐详情'
-                            : '${currentPlan.name} · 点击查看详情',
+                        note: _subscriptionNoteLabel(controller, currentPlan),
                         onTap: session == null
                             ? null
                             : () => _openPlanDetails(
@@ -172,12 +171,12 @@ class HomePage extends StatelessWidget {
                     const SizedBox(width: 14),
                     Expanded(
                       child: _StatusCard(
-                        title: '模板管理',
-                        value: '模板',
-                        note: '创建、删除与刷新',
+                        title: '详细设置',
+                        value: '设置',
+                        note: '模板、拍摄、设备、AI',
                         onTap: session == null
                             ? null
-                            : () => _openMoreOptions(
+                            : () => _openDetailedSettings(
                                 context,
                                 controller: controller,
                                 session: session,
@@ -185,19 +184,6 @@ class HomePage extends StatelessWidget {
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 20),
-                _PlanSection(
-                  plans: controller.plans,
-                  subscription: controller.subscription,
-                  onPlanTap: session == null
-                      ? null
-                      : (plan) => _openPlanDetails(
-                          context,
-                          controller: controller,
-                          accessToken: session.accessToken,
-                          initialPlanId: plan.id,
-                        ),
                 ),
                 const SizedBox(height: 14),
                 Text(
@@ -226,6 +212,26 @@ class HomePage extends StatelessWidget {
       return '生效中';
     }
     return subscription.status;
+  }
+
+  String _subscriptionNoteLabel(
+    AuthController controller,
+    PlanSummary? currentPlan,
+  ) {
+    if (currentPlan == null) {
+      final count = controller.plans.length;
+      return count == 0 ? '点击查看套餐详情' : '未开通 · 共 $count 个套餐';
+    }
+    final subscription = controller.subscription;
+    final captureQuota = subscription?.captureQuota ?? currentPlan.captureQuota;
+    final aiQuota = subscription?.aiTaskQuota ?? currentPlan.aiTaskQuota;
+    final quotaLabel = <String>[
+      if (captureQuota != null) '拍摄 $captureQuota',
+      if (aiQuota != null) 'AI $aiQuota',
+    ].join(' · ');
+    return quotaLabel.isEmpty
+        ? '${currentPlan.name} · 点击查看详情'
+        : '${currentPlan.name} · $quotaLabel';
   }
 
   String _serviceStatusLabel(AuthController controller) {
@@ -268,19 +274,18 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  Future<void> _openMoreOptions(
+  Future<void> _openDetailedSettings(
     BuildContext context, {
     required AuthController controller,
     required AuthSession session,
   }) {
-    return showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => _MoreOptionsSheet(
-        controller: controller,
-        session: session,
-        serviceStatus: _serviceStatusLabel(controller),
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => DetailedSettingsPage(
+          controller: controller,
+          session: session,
+          serviceStatus: _serviceStatusLabel(controller),
+        ),
       ),
     );
   }
@@ -823,6 +828,37 @@ class _QuickActionSection extends StatelessWidget {
                       builder: (_) => CameraCapturePage(
                         apiService: controller.apiService,
                         accessToken: session!.accessToken,
+                        detailedSettingsBuilder: (_) => DetailedSettingsPage(
+                          controller: controller,
+                          session: session!,
+                          serviceStatus: '已接通',
+                        ),
+                      ),
+                    ),
+                  );
+                },
+        ),
+        const SizedBox(height: 12),
+        _QuickActionCard(
+          title: '进入设备联动',
+          subtitle: '连接树莓派云台，使用手机画面自动跟随',
+          icon: Icons.router_outlined,
+          compact: false,
+          onTap: session == null
+              ? null
+              : () async {
+                  await Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DeviceLinkPage(
+                        mobileApiService: controller.apiService,
+                        accessToken: session!.accessToken,
+                        initialDeviceApiBaseUrl:
+                            controller.serverConfig.deviceApiBaseUrl,
+                        detailedSettingsBuilder: (_) => DetailedSettingsPage(
+                          controller: controller,
+                          session: session!,
+                          serviceStatus: '已接通',
+                        ),
                       ),
                     ),
                   );
@@ -854,24 +890,21 @@ class _QuickActionSection extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: _QuickActionCard(
-                title: '进入设备联动',
-                subtitle: '连接设备并执行控制',
-                icon: Icons.router_outlined,
+                title: '本机相册',
+                subtitle: '查看已保存照片和视频',
+                icon: Icons.photo_library_outlined,
                 compact: true,
-                onTap: session == null
-                    ? null
-                    : () async {
-                        await Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => DeviceLinkPage(
-                              mobileApiService: controller.apiService,
-                              accessToken: session!.accessToken,
-                              initialDeviceApiBaseUrl:
-                                  controller.serverConfig.deviceApiBaseUrl,
-                            ),
-                          ),
-                        );
-                      },
+                onTap: () async {
+                  final opened = await const GallerySaveService().openGallery();
+                  if (!context.mounted) {
+                    return;
+                  }
+                  if (!opened) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('无法打开本机相册，请从系统图库进入。')),
+                    );
+                  }
+                },
               ),
             ),
           ],
@@ -1012,160 +1045,6 @@ class _QuickActionCard extends StatelessWidget {
                         ),
                       ],
                     ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PlanSection extends StatelessWidget {
-  const _PlanSection({
-    required this.plans,
-    required this.subscription,
-    this.onPlanTap,
-  });
-
-  final List<PlanSummary> plans;
-  final SubscriptionInfo? subscription;
-  final ValueChanged<PlanSummary>? onPlanTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFDCE5E7)),
-      ),
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-          childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          title: Text(
-            '可用套餐',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          subtitle: Text(
-            plans.isEmpty
-                ? '暂无套餐数据'
-                : subscription == null
-                ? '共 ${plans.length} 个套餐'
-                : '已开通 1 个套餐，可切换查看其余套餐',
-            style: const TextStyle(color: Color(0xFF5A6B70)),
-          ),
-          children: <Widget>[
-            if (plans.isEmpty)
-              const _EmptyBlock(
-                title: '暂无套餐数据',
-                subtitle: '确认 backend 中已有计划数据，或者点击右上角刷新。',
-              )
-            else
-              ...plans.map(_buildPlanCard),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPlanCard(PlanSummary plan) {
-    final isCurrentPlan = subscription?.planId == plan.id;
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPlanTap == null ? null : () => onPlanTap!(plan),
-          borderRadius: BorderRadius.circular(20),
-          child: Ink(
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAF8),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          plan.name,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF17313A),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: isCurrentPlan
-                              ? const Color(0xFF17313A)
-                              : const Color(0xFFE7F1EC),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          child: Text(
-                            isCurrentPlan ? '当前订阅' : '可购买',
-                            style: TextStyle(
-                              color: isCurrentPlan
-                                  ? Colors.white
-                                  : const Color(0xFF2C6E49),
-                              fontWeight: FontWeight.w700,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    plan.priceLabel,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF2C6E49),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '套餐编码：${plan.planCode}  ·  状态：${plan.status}',
-                    style: const TextStyle(
-                      color: Color(0xFF4B5563),
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: Text(
-                          isCurrentPlan ? '点击查看续费与额度信息' : '点击查看套餐详情与购买信息',
-                          style: const TextStyle(
-                            color: Color(0xFF5A6B70),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.chevron_right, color: Color(0xFF5A6B70)),
-                    ],
-                  ),
-                ],
-              ),
             ),
           ),
         ),

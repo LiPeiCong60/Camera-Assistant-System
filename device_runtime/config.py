@@ -46,7 +46,7 @@ ServoDriverKind = Literal["mock", "ttl_bus"]
 class TTLBusServoConfig:
     port: str = "/dev/ttyUSB0"
     baudrate: int = 115200
-    move_time_ms: int = 120
+    move_time_ms: int = 25
     timeout_s: float = 0.2
 
 
@@ -56,29 +56,37 @@ class GimbalConfig:
     tilt: ServoAxisConfig
     driver_kind: ServoDriverKind = "ttl_bus"
     ttl_bus: TTLBusServoConfig = field(default_factory=TTLBusServoConfig)
-    smooth_sleep_s: float = 0.01
+    smooth_sleep_s: float = 0.06
     feedback_poll_interval_s: float = 0.05
+    live_control_interval_s: float = 0.025
+    live_command_interval_s: float = 0.08
+    live_command_hold_s: float = 0.30
+    tracking_ease_alpha: float = 0.68
+    tracking_target_hold_s: float = 0.22
 
 
 @dataclass(slots=True)
 class TrackingConfig:
-    deadzone_px: int = 30
+    min_confidence: float = 0.35
+    deadzone_px: int = 36
     debounce_frames: int = 2
-    gain_x: float = 0.024
-    gain_y: float = 0.024
-    max_delta_deg: float = 2.8
-    min_command_interval_s: float = 0.08
-    command_smooth_alpha: float = 0.4
-    min_output_deg: float = 0.1
-    max_anchor_jump_px: float = 120.0
-    settle_after_move_s: float = 0.18
+    gain_x: float = 0.028
+    gain_y: float = 0.026
+    max_delta_deg: float = 2.0
+    min_command_interval_s: float = 0.06
+    command_smooth_alpha: float = 0.42
+    min_output_deg: float = 0.06
+    max_anchor_jump_px: float = 140.0
+    settle_after_move_s: float = 0.16
+    compose_deadzone_px: int = 24
     invert_pan: bool = False
     invert_tilt: bool = False
+    sensitivity: float = 1.0
 
 
 @dataclass(slots=True)
 class AppConfig:
-    manual_step_deg: float = 3.0
+    manual_step_deg: float = 4.5
     ui_refresh_fps: float = 24.0
     preview_scale: float = 1.0
     preview_jpeg_quality: int = 82

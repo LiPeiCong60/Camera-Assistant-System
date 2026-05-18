@@ -15,7 +15,7 @@ class AiTask(TimestampMixin, Base):
     __tablename__ = "ai_tasks"
     __table_args__ = (
         CheckConstraint(
-            "task_type IN ('analyze_photo', 'analyze_background', 'analyze_template', 'batch_pick', 'auto_angle', 'background_lock')",
+            "task_type IN ('analyze_photo', 'analyze_background', 'batch_pick', 'auto_angle', 'template_match', 'video_analysis')",
             name="chk_ai_tasks_type",
         ),
         CheckConstraint(
@@ -39,7 +39,7 @@ class AiTask(TimestampMixin, Base):
     result_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     recommended_pan_delta: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     recommended_tilt_delta: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
-    target_box_norm: Mapped[list[float] | dict | None] = mapped_column(JSON)
+    target_box_norm: Mapped[dict | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

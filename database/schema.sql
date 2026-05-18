@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS capture_sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_capture_sessions_mode CHECK (
-        mode IN ('mobile_only', 'device_link', 'MANUAL', 'AUTO_TRACK', 'SMART_COMPOSE')
+        mode IN ('mobile_only', 'gimbal_manual', 'gimbal_follow', 'gimbal_template', 'ai_auto_angle', 'ai_background')
     ),
     CONSTRAINT chk_capture_sessions_status CHECK (status IN ('opened', 'closed', 'cancelled'))
 );
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS captures (
     metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_captures_type CHECK (capture_type IN ('single', 'photo', 'burst', 'best', 'background')),
+    CONSTRAINT chk_captures_type CHECK (capture_type IN ('single', 'burst', 'best', 'background', 'template', 'recording')),
     CONSTRAINT chk_captures_dimensions CHECK (
         (width IS NULL OR width > 0) AND
         (height IS NULL OR height > 0)
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS ai_tasks (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
     CONSTRAINT chk_ai_tasks_type CHECK (
-        task_type IN ('analyze_photo', 'analyze_background', 'analyze_template', 'batch_pick', 'auto_angle', 'background_lock')
+        task_type IN ('analyze_photo', 'analyze_background', 'batch_pick', 'auto_angle', 'template_match', 'video_analysis')
     ),
     CONSTRAINT chk_ai_tasks_status CHECK (
         status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled')

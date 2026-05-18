@@ -13,9 +13,24 @@ FOLLOW_TEXT = {
     "face": "面部",
 }
 
+FOLLOW_MODE_ALIASES = {
+    "shoulders": "shoulders",
+    "shoulder": "shoulders",
+    "shoulder_center": "shoulders",
+    "face": "face",
+    "face_center": "face",
+}
+
+FOLLOW_MODE_TARGET_TYPES = {
+    "shoulders": "shoulder_center",
+    "face": "face_center",
+}
+
 SPEED_TEXT = {
     "slow": "慢速",
     "normal": "标准",
+    "fast": "快速",
+    "turbo": "灵敏",
 }
 
 DETECTION_LABEL_TEXT = {
@@ -35,6 +50,16 @@ def mode_to_text(mode: ControlMode) -> str:
 
 def follow_to_text(mode: str) -> str:
     return FOLLOW_TEXT.get(mode, mode)
+
+
+def normalize_follow_mode(mode: str) -> str:
+    normalized = str(mode).strip().lower()
+    return FOLLOW_MODE_ALIASES.get(normalized, normalized)
+
+
+def follow_mode_to_target_type(mode: str) -> str:
+    normalized = normalize_follow_mode(mode)
+    return FOLLOW_MODE_TARGET_TYPES.get(normalized, normalized)
 
 
 def speed_to_text(mode: str) -> str:

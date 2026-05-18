@@ -173,7 +173,7 @@ class _TemplatePhotoDialogState extends State<_TemplatePhotoDialog> {
                 const SizedBox(height: 14),
               ] else ...<Widget>[
                 Text(
-                  '将上传到后端识别人体姿态，并保存为可用于拍摄和设备联动的模板。',
+                  '系统会自动提取人物关键点和模板线框，并保存为可用于拍摄和设备联动的模板。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 14),

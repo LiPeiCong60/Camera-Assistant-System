@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
-from datetime import datetime, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from backend.app.models import Base, Capture, CaptureSession, User
+from backend.app.api.routes.mobile import _build_upload_file_parts, _is_supported_capture_upload
+from backend.app.models import Base, User
+from backend.app.schemas.capture import CaptureCreateRequest
+from backend.app.schemas.capture_session import CaptureSessionCreateRequest
+from backend.app.services.mobile_service import MobileService
 
 
 class CaptureTypeTest(unittest.TestCase):
-    def test_device_link_capture_type_can_be_persisted(self) -> None:
+    def test_legacy_device_link_values_are_mapped_before_persisting(self) -> None:
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
 
@@ -22,29 +26,42 @@ class CaptureTypeTest(unittest.TestCase):
                 role="user",
                 status="active",
             )
-            capture_session = CaptureSession(
-                id=1,
-                session_code="device-link-session",
-                user_id=1,
-                mode="device_link",
-                status="opened",
-                started_at=datetime.now(timezone.utc),
-            )
-            capture = Capture(
-                id=1,
-                session_id=1,
-                user_id=1,
-                capture_type="device_link",
-                file_url="http://example.test/uploads/capture.jpg",
-                storage_provider="local_static",
-            )
-
-            session.add_all([user, capture_session, capture])
+            session.add(user)
             session.commit()
 
-            persisted = session.get(Capture, 1)
-            self.assertIsNotNone(persisted)
-            self.assertEqual(persisted.capture_type, "device_link")
+            service = MobileService(session)
+            capture_session = service.create_capture_session(
+                user,
+                CaptureSessionCreateRequest(mode="device_link"),
+            )
+            capture = service.create_capture(
+                user,
+                CaptureCreateRequest(
+                    session_id=capture_session.id,
+                    capture_type="device_link",
+                    file_url="http://example.test/uploads/capture.jpg",
+                    storage_provider="local_static",
+                    local_album_saved=True,
+                ),
+            )
+
+            self.assertEqual(capture_session.mode, "gimbal_manual")
+            self.assertEqual(capture.capture_type, "single")
+            self.assertEqual(capture.capture_metadata["source"], "device_link")
+            self.assertEqual(capture.capture_metadata["media_type"], "photo")
+            self.assertTrue(capture.capture_metadata["local_album_saved"])
+
+    def test_mobile_capture_file_upload_accepts_video_files(self) -> None:
+        upload = SimpleNamespace(filename="recording.mp4", content_type="video/mp4")
+
+        self.assertTrue(_is_supported_capture_upload(upload))
+        self.assertEqual(_build_upload_file_parts(upload), ("recording.mp4", ".mp4"))
+
+    def test_mobile_capture_file_upload_infers_video_suffix(self) -> None:
+        upload = SimpleNamespace(filename="recording.tmp", content_type="video/webm")
+
+        self.assertTrue(_is_supported_capture_upload(upload))
+        self.assertEqual(_build_upload_file_parts(upload), ("recording.tmp", ".webm"))
 
 
 if __name__ == "__main__":

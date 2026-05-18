@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image/image.dart' as img;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/ai_task_summary.dart';
 import '../../models/capture_record.dart';
@@ -19,6 +20,7 @@ import '../../models/normalized_geometry.dart';
 import '../../models/template_summary.dart';
 import '../../services/api_client.dart';
 import '../../services/app_config.dart';
+import '../../services/gallery_save_service.dart';
 import '../../services/local_image_resolver.dart';
 import '../../services/media_pipe_pose_detector_service.dart';
 import '../../services/mobile_api_service.dart';
@@ -33,10 +35,12 @@ class CameraCapturePage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.accessToken,
+    this.detailedSettingsBuilder,
   });
 
   final MobileApiService apiService;
   final String accessToken;
+  final WidgetBuilder? detailedSettingsBuilder;
 
   @override
   State<CameraCapturePage> createState() => _CameraCapturePageState();
@@ -101,11 +105,19 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   );
   final MediaPipePoseDetectorService _mediaPipePoseDetector =
       MediaPipePoseDetectorService();
+  final GallerySaveService _gallerySaveService = const GallerySaveService();
+  final Map<String, String> _localAlbumPaths = <String, String>{};
+  final Map<String, Duration> _videoDurations = <String, Duration>{};
+  XFile? _lastRecordedVideo;
+  DateTime? _recordingStartedAt;
+  bool _isRecordingVideo = false;
+  bool _isFinalizingVideo = false;
 
   @override
   void initState() {
     super.initState();
     unawaited(_applyCameraPageOrientations());
+    unawaited(_loadDetailedSettingsDefaults());
     _setupCamera();
     _loadTemplates();
   }
@@ -203,6 +215,19 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return _lastCapture != null;
   }
 
+  bool get _canToggleVideoRecording {
+    if (_isRecordingVideo) {
+      return !_isFinalizingVideo;
+    }
+    final controller = _controller;
+    return controller != null &&
+        controller.value.isInitialized &&
+        !_isPreparing &&
+        !_isCapturing &&
+        !_isSubmitting &&
+        !_isFinalizingVideo;
+  }
+
   String get _shootModeLabel => _labelForShootMode(_shootMode);
 
   void _showBanner({String? errorMessage, String? syncMessage}) {
@@ -228,11 +253,51 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
   }
 
-  Future<void> _applyCameraPageOrientations() {
-    return SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+  static String _detailedSettingKey(String name) => 'detailed_settings.$name';
+
+  Future<void> _loadDetailedSettingsDefaults() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) {
+      return;
+    }
+    final overlayDefaults = OverlaySettings(
+      showBodyBox:
+          prefs.getBool(_detailedSettingKey('overlay.show_body_box')) ??
+          _overlaySettings.showBodyBox,
+      showSkeleton:
+          prefs.getBool(_detailedSettingKey('overlay.show_skeleton')) ??
+          _overlaySettings.showSkeleton,
+      showTemplateBox:
+          prefs.getBool(_detailedSettingKey('overlay.show_template_box')) ??
+          _overlaySettings.showTemplateBox,
+      showTemplate:
+          prefs.getBool(_detailedSettingKey('overlay.show_template_line')) ??
+          _overlaySettings.showTemplate,
+    );
+    final shootMode = _shootModeFromPreference(
+      prefs.getString(_detailedSettingKey('camera.default_shoot_mode')),
+    );
+    setState(() {
+      _overlaySettings = overlayDefaults;
+      _mirrorPreview =
+          prefs.getBool(_detailedSettingKey('camera.mirror_preview')) ??
+          _mirrorPreview;
+      if (shootMode != null) {
+        _shootMode = shootMode;
+      }
+      _overlayScene = _composeOverlayScene();
+    });
+    unawaited(_syncLivePoseDetection());
+  }
+
+  Future<void> _applyCameraPageOrientations() async {
+    final prefs = await SharedPreferences.getInstance();
+    final allowLandscape =
+        prefs.getBool(_detailedSettingKey('camera.enable_landscape')) ?? true;
+    return SystemChrome.setPreferredOrientations(<DeviceOrientation>[
       DeviceOrientation.portraitUp,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
+      if (allowLandscape) DeviceOrientation.landscapeLeft,
+      if (allowLandscape) DeviceOrientation.landscapeRight,
     ]);
   }
 
@@ -259,7 +324,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         return;
       }
 
-      _selectedCameraIndex = _preferredCameraIndex(_cameras);
+      final prefs = await SharedPreferences.getInstance();
+      _selectedCameraIndex = _preferredCameraIndex(
+        _cameras,
+        preferredLens:
+            prefs.getString(_detailedSettingKey('camera.preferred_lens')) ??
+            'back',
+      );
       await _openCamera(_selectedCameraIndex);
     } on CameraException catch (error) {
       if (!mounted) {
@@ -415,7 +486,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       return;
     }
 
-    final draft = await showTemplatePhotoDialog(context, title: '新增模板');
+    final draft = await showTemplatePhotoDialog(
+      context,
+      title: '新增模板',
+      enabledRecognitionModes: const <TemplateRecognitionMode>{
+        TemplateRecognitionMode.local,
+      },
+    );
     if (!mounted || draft == null) {
       return;
     }
@@ -426,32 +503,23 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     });
 
     try {
-      late final TemplateSummary template;
-      if (draft.recognitionMode == TemplateRecognitionMode.local) {
-        final templateData = await _buildLocalTemplateDataFromPhoto(
-          name: draft.name,
-          filePath: draft.filePath,
-        );
-        final uploadedFile = await widget.apiService.uploadCaptureFile(
-          accessToken: widget.accessToken,
-          filePath: draft.filePath,
-        );
-        templateData['source_image_url'] = uploadedFile.fileUrl;
-        templateData['image_path'] = uploadedFile.fileUrl;
-        template = await widget.apiService.createTemplate(
-          accessToken: widget.accessToken,
-          name: draft.name,
-          sourceImageUrl: uploadedFile.fileUrl,
-          previewImageUrl: uploadedFile.fileUrl,
-          templateData: templateData,
-        );
-      } else {
-        template = await widget.apiService.createTemplateFromPhoto(
-          accessToken: widget.accessToken,
-          name: draft.name,
-          filePath: draft.filePath,
-        );
-      }
+      final templateData = await _buildLocalTemplateDataFromPhoto(
+        name: draft.name,
+        filePath: draft.filePath,
+      );
+      final uploadedFile = await widget.apiService.uploadCaptureFile(
+        accessToken: widget.accessToken,
+        filePath: draft.filePath,
+      );
+      templateData['source_image_url'] = uploadedFile.fileUrl;
+      templateData['image_path'] = uploadedFile.fileUrl;
+      final template = await widget.apiService.createTemplate(
+        accessToken: widget.accessToken,
+        name: draft.name,
+        sourceImageUrl: uploadedFile.fileUrl,
+        previewImageUrl: uploadedFile.fileUrl,
+        templateData: templateData,
+      );
 
       if (!mounted) {
         return;
@@ -463,19 +531,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           ..._templates.where((item) => item.id != template.id),
         ];
       });
-      _showBanner(
-        syncMessage:
-            '已新增模板并自动选中：${template.name}（${draft.recognitionMode == TemplateRecognitionMode.local ? '本地识别' : '后端识别'}）',
-      );
+      _showBanner(syncMessage: '已新增模板并自动选中：${template.name}');
       _selectTemplate(template);
     } on ApiException catch (error) {
       if (!mounted) {
         return;
       }
-      _showBanner(
-        errorMessage:
-            '${error.message}${draft.recognitionMode == TemplateRecognitionMode.backend ? '。也可以重新新增模板时切换为“本地识别”再试。' : ''}',
-      );
+      _showBanner(errorMessage: error.message);
     } catch (_) {
       if (!mounted) {
         return;
@@ -765,7 +827,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   Future<void> _deleteSelectedTemplate() async {
     final template = _selectedTemplate;
-    if (template == null || _isDeletingTemplate) {
+    if (template == null) {
+      return;
+    }
+    await _deleteTemplate(template);
+  }
+
+  Future<void> _deleteTemplate(TemplateSummary template) async {
+    if (_isDeletingTemplate) {
       return;
     }
     if (template.isRecommendedDefault) {
@@ -812,15 +881,24 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       final nextTemplates = _templates
           .where((item) => item.id != template.id)
           .toList(growable: false);
-      final nextSelectedTemplate = _resolveTemplateSelection(nextTemplates);
+      final currentTemplateId = _selectedTemplate?.id;
+      final nextSelectedTemplate = currentTemplateId == template.id
+          ? null
+          : _resolveTemplateSelection(
+              nextTemplates,
+              preferredTemplateId: currentTemplateId,
+            );
       setState(() {
         _templates = nextTemplates;
       });
 
       if (nextSelectedTemplate != null) {
         _selectTemplate(nextSelectedTemplate, autoPick: true);
-      } else {
+        _showBanner(syncMessage: '已删除模板：${template.name}');
+      } else if (currentTemplateId == template.id) {
         _clearSelectedTemplate(syncMessage: '已删除模板：${template.name}');
+      } else {
+        _showBanner(syncMessage: '已删除模板：${template.name}');
       }
     } on ApiException catch (error) {
       if (!mounted) {
@@ -922,10 +1000,28 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
   }
 
+  _CameraShootMode? _shootModeFromPreference(String? value) {
+    switch (value) {
+      case 'normal':
+        return _CameraShootMode.normal;
+      case 'template':
+      case 'template_guided':
+        return _CameraShootMode.templateGuided;
+      case 'ai_burst':
+        return _CameraShootMode.aiBurst;
+      case 'background':
+        return _CameraShootMode.background;
+    }
+    return null;
+  }
+
   String _sessionModeForCurrentShot() {
+    if (_shootMode == _CameraShootMode.background) {
+      return 'ai_background';
+    }
     if (_shootMode == _CameraShootMode.templateGuided &&
         _selectedTemplate != null) {
-      return 'SMART_COMPOSE';
+      return 'gimbal_template';
     }
     return 'mobile_only';
   }
@@ -943,6 +1039,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   String _currentCaptureStatusLabel() {
+    if (_isRecordingVideo) {
+      return '录像中';
+    }
+    if (_isFinalizingVideo) {
+      return '保存视频中';
+    }
     if (_shootMode == _CameraShootMode.aiBurst && _hasPendingBurstCaptures) {
       return '待分析 ${_pendingBurstCaptures.length} 张';
     }
@@ -957,6 +1059,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
     if (_lastCapture != null) {
       return '已拍摄';
+    }
+    if (_lastRecordedVideo != null) {
+      return '已录像';
     }
     return '待拍摄';
   }
@@ -993,9 +1098,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return null;
   }
 
-  int _preferredCameraIndex(List<CameraDescription> cameras) {
+  int _preferredCameraIndex(
+    List<CameraDescription> cameras, {
+    String preferredLens = 'back',
+  }) {
+    final direction = preferredLens == 'front'
+        ? CameraLensDirection.front
+        : CameraLensDirection.back;
     final index = cameras.indexWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.back,
+      (camera) => camera.lensDirection == direction,
     );
     return index >= 0 ? index : 0;
   }
@@ -1058,7 +1169,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Future<void> _toggleCamera() async {
-    if (_isPreparing) {
+    if (_isPreparing || _isRecordingVideo || _isFinalizingVideo) {
       return;
     }
 
@@ -1095,7 +1206,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   void _togglePreviewMirror() {
     setState(() {
-      _mirrorPreview = false;
+      _mirrorPreview = !_mirrorPreview;
     });
     _showBanner(syncMessage: _mirrorPreview ? '画面镜像已开启。' : '画面镜像已关闭。');
   }
@@ -1106,7 +1217,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         !controller.value.isInitialized ||
         _isCapturing ||
         _isPreparing ||
-        _isSubmitting) {
+        _isSubmitting ||
+        _isRecordingVideo ||
+        _isFinalizingVideo) {
       return;
     }
 
@@ -1124,12 +1237,30 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         capture,
         lensDirection: captureLensDirection,
       );
+      final prefs = await SharedPreferences.getInstance();
+      final saveToGallery =
+          prefs.getBool(
+            _detailedSettingKey('recording.save_photos_to_gallery'),
+          ) ??
+          true;
+      final uploadToHistory =
+          prefs.getBool(
+            _detailedSettingKey('recording.upload_photos_to_history'),
+          ) ??
+          true;
+      final galleryPath = saveToGallery
+          ? await _savePhotoToGallery(normalizedCapture)
+          : null;
       if (!mounted) {
         return;
       }
 
       setState(() {
         _lastCapture = normalizedCapture;
+        _lastRecordedVideo = null;
+        if (galleryPath != null && galleryPath.isNotEmpty) {
+          _localAlbumPaths[normalizedCapture.path] = galleryPath;
+        }
         if (_shootMode == _CameraShootMode.aiBurst) {
           _pendingBurstCaptures.add(normalizedCapture);
         } else {
@@ -1142,12 +1273,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         _analysisOverlayScene = null;
         _overlayScene = _composeOverlayScene();
       });
+      final photoSavedLabel = galleryPath == null ? '照片已拍摄' : '照片已保存到相册';
       _showBanner(
         syncMessage: _shootMode == _CameraShootMode.aiBurst
-            ? '已加入AI连拍序列，当前共 ${_pendingBurstCaptures.length} 张'
-            : '照片已拍摄，正在写入历史记录。',
+            ? '$photoSavedLabel，并加入AI连拍序列，当前共 ${_pendingBurstCaptures.length} 张'
+            : uploadToHistory
+            ? '$photoSavedLabel，正在写入历史记录。'
+            : '$photoSavedLabel。',
       );
-      if (_shootMode != _CameraShootMode.aiBurst) {
+      if (_shootMode != _CameraShootMode.aiBurst && uploadToHistory) {
         unawaited(
           _ensureSingleCaptureRecorded(
             normalizedCapture,
@@ -1199,6 +1333,62 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     return capture;
   }
 
+  String _timestampedMediaFileName({
+    required String prefix,
+    required String path,
+    required String fallbackExtension,
+  }) {
+    final now = DateTime.now();
+    final stamp =
+        '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}_'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}'
+        '${now.second.toString().padLeft(2, '0')}';
+    final rawExtension = path.split('.').last.toLowerCase();
+    final extension = rawExtension == path.toLowerCase() || rawExtension.isEmpty
+        ? fallbackExtension
+        : rawExtension;
+    return '${prefix}_$stamp.$extension';
+  }
+
+  Future<String?> _savePhotoToGallery(XFile capture) async {
+    try {
+      return await _gallerySaveService.saveImageFile(
+        path: capture.path,
+        fileName: _timestampedMediaFileName(
+          prefix: 'camera_assistant_photo',
+          path: capture.path,
+          fallbackExtension: 'jpg',
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        _showBanner(errorMessage: '照片已拍摄，但保存到手机相册失败：$error');
+      }
+      return null;
+    }
+  }
+
+  Future<String?> _saveVideoToGallery(XFile video) async {
+    try {
+      return await _gallerySaveService.saveVideoFile(
+        path: video.path,
+        fileName: _timestampedMediaFileName(
+          prefix: 'camera_assistant_video',
+          path: video.path,
+          fallbackExtension: 'mp4',
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        _showBanner(errorMessage: '视频已录制，但保存到手机相册失败：$error');
+      }
+      return null;
+    }
+  }
+
   Future<CaptureSessionSummary> _createCaptureSessionForCurrentShot() {
     return widget.apiService.createCaptureSession(
       accessToken: widget.accessToken,
@@ -1219,8 +1409,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     required XFile capture,
     required CaptureUploadResult uploadedFile,
   }) {
+    final galleryPath = _localAlbumPaths[capture.path];
     return <String, dynamic>{
+      'media_type': 'photo',
+      'local_album_saved': galleryPath != null,
+      'duration_ms': null,
       'local_path': capture.path,
+      ...galleryPath == null
+          ? const <String, dynamic>{}
+          : <String, dynamic>{'local_album_path': galleryPath},
       'storage_path': uploadedFile.storagePath,
       'relative_path': uploadedFile.relativePath,
       'original_filename': uploadedFile.originalFilename,
@@ -1322,6 +1519,126 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
   }
 
+  Future<void> _startVideoRecording() async {
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        _isPreparing ||
+        _isCapturing ||
+        _isSubmitting ||
+        _isRecordingVideo ||
+        _isFinalizingVideo) {
+      return;
+    }
+
+    try {
+      await _stopLivePoseDetection(clearOverlay: false);
+      await controller.prepareForVideoRecording();
+      await controller.startVideoRecording();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isRecordingVideo = true;
+        _recordingStartedAt = DateTime.now();
+        _lastRecordedVideo = null;
+        _lastCapture = null;
+        _lastUploadedCapture = null;
+        _lastAiTask = null;
+        _analysisOverlayScene = null;
+      });
+      _showBanner(syncMessage: '录像已开始。');
+    } on CameraException catch (error) {
+      await _syncLivePoseDetection();
+      if (mounted) {
+        _showBanner(errorMessage: _mapCameraException(error));
+      }
+    }
+  }
+
+  Future<void> _stopVideoRecording() async {
+    final controller = _controller;
+    if (controller == null ||
+        !controller.value.isInitialized ||
+        !_isRecordingVideo ||
+        _isFinalizingVideo) {
+      return;
+    }
+
+    final startedAt = _recordingStartedAt;
+    setState(() {
+      _isFinalizingVideo = true;
+    });
+
+    try {
+      final video = await controller.stopVideoRecording();
+      final duration = startedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(startedAt);
+      final prefs = await SharedPreferences.getInstance();
+      final saveToGallery =
+          prefs.getBool(
+            _detailedSettingKey('recording.save_videos_to_gallery'),
+          ) ??
+          true;
+      final galleryPath = saveToGallery
+          ? await _saveVideoToGallery(video)
+          : null;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isRecordingVideo = false;
+        _isFinalizingVideo = false;
+        _recordingStartedAt = null;
+        _lastRecordedVideo = video;
+        _lastCapture = null;
+        _lastUploadedCapture = null;
+        _lastAiTask = null;
+        _analysisOverlayScene = null;
+        _videoDurations[video.path] = duration;
+        if (galleryPath != null && galleryPath.isNotEmpty) {
+          _localAlbumPaths[video.path] = galleryPath;
+        }
+      });
+      _showBanner(
+        syncMessage: galleryPath == null ? '视频已录制，未写入历史。' : '视频已保存到相册。',
+      );
+    } on CameraException catch (error) {
+      if (mounted) {
+        setState(() {
+          _isRecordingVideo = false;
+          _isFinalizingVideo = false;
+          _recordingStartedAt = null;
+        });
+        _showBanner(errorMessage: _mapCameraException(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFinalizingVideo = false;
+        });
+      }
+      await _syncLivePoseDetection();
+    }
+  }
+
+  Future<void> _toggleVideoRecording() {
+    return _isRecordingVideo ? _stopVideoRecording() : _startVideoRecording();
+  }
+
+  Future<void> _openDetailedSettingsPage(BuildContext sheetContext) async {
+    final builder = widget.detailedSettingsBuilder;
+    Navigator.of(sheetContext).pop();
+    if (builder == null) {
+      _showBanner(syncMessage: '请从首页进入“详细设置”调整高级参数。');
+      return;
+    }
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute<void>(builder: builder));
+  }
+
   Future<void> _uploadAndAnalyze() async {
     if (!_canAnalyzeCurrentSelection || _isSubmitting) {
       return;
@@ -1363,21 +1680,10 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             width: _controller?.value.previewSize?.height.round(),
             height: _controller?.value.previewSize?.width.round(),
             storageProvider: uploadedFile.storageProvider,
-            metadata: <String, dynamic>{
-              'local_path': capture.path,
-              'storage_path': uploadedFile.storagePath,
-              'relative_path': uploadedFile.relativePath,
-              'original_filename': uploadedFile.originalFilename,
-              'content_type': uploadedFile.contentType,
-              'shoot_mode': _keyForShootMode(_shootMode),
-              'overlay': <String, dynamic>{
-                'show_body_box': _overlaySettings.showBodyBox,
-                'show_skeleton': _overlaySettings.showSkeleton,
-                'show_template_box': _overlaySettings.showTemplateBox,
-                'show_template': _overlaySettings.showTemplate,
-              },
-              'selected_template_id': _selectedTemplate?.id,
-            },
+            metadata: _captureRecordMetadata(
+              capture: capture,
+              uploadedFile: uploadedFile,
+            ),
           );
           uploadedCaptures.add(uploadedCapture);
         }
@@ -1491,6 +1797,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           initialTemplate: _selectedTemplate,
           initialSessionCode: _captureSession?.sessionCode,
           entryLabel: 'camera_capture_page',
+          detailedSettingsBuilder: widget.detailedSettingsBuilder,
         ),
       ),
     );
@@ -1639,6 +1946,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     }
   }
 
+  String _formatDuration(Duration? duration) {
+    if (duration == null || duration == Duration.zero) {
+      return '--:--';
+    }
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds.remainder(60);
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
   String? _analysisSummaryLabel() {
     final task = _lastAiTask;
     if (task == null) {
@@ -1732,7 +2048,11 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     if (!Platform.isAndroid && !Platform.isIOS) {
       return false;
     }
-    if (_isPreparing || _isCapturing || _isSubmitting) {
+    if (_isPreparing ||
+        _isCapturing ||
+        _isSubmitting ||
+        _isRecordingVideo ||
+        _isFinalizingVideo) {
       return false;
     }
     return _overlaySettings.showBodyBox || _overlaySettings.showSkeleton;
@@ -2617,7 +2937,11 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     if (previousOrientation == null || previousOrientation == orientation) {
       return;
     }
-    if (_isHandlingOrientationChange || _isPreparing || _isCapturing) {
+    if (_isHandlingOrientationChange ||
+        _isPreparing ||
+        _isCapturing ||
+        _isRecordingVideo ||
+        _isFinalizingVideo) {
       return;
     }
 
@@ -2634,7 +2958,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
     if (controller == null ||
         !controller.value.isInitialized ||
         _isPreparing ||
-        _isCapturing) {
+        _isCapturing ||
+        _isRecordingVideo ||
+        _isFinalizingVideo) {
       return;
     }
 
@@ -2693,11 +3019,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                   const SizedBox(width: 10),
                   Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      _buildLandscapeOverlayColumn(),
-                      const SizedBox(height: 10),
-                      _buildLandscapeStatusColumn(),
-                    ],
+                    children: <Widget>[_buildLandscapeOverlayColumn()],
                   ),
                 ],
               ),
@@ -2722,8 +3044,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             _DockActionButton(
-              icon: Icons.tune_rounded,
-              label: '详情',
+              icon: Icons.settings_outlined,
+              label: '设置',
               size: railButtonSize,
               onTap: _openDetailsSheet,
               child: _buildRecentCaptureThumb(),
@@ -2740,16 +3062,37 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             _ShutterButton(
               size: 68,
               isBusy: _isCapturing,
-              onTap: _isPreparing || _isCapturing || _isSubmitting
+              onTap:
+                  _isPreparing ||
+                      _isCapturing ||
+                      _isSubmitting ||
+                      _isRecordingVideo ||
+                      _isFinalizingVideo
                   ? null
                   : _capturePhoto,
+            ),
+            const SizedBox(height: 10),
+            _DockActionButton(
+              icon: _isRecordingVideo
+                  ? Icons.stop_circle_outlined
+                  : Icons.videocam_outlined,
+              label: _isRecordingVideo ? '停止' : '录像',
+              size: railButtonSize,
+              onTap: _canToggleVideoRecording
+                  ? () => unawaited(_toggleVideoRecording())
+                  : null,
             ),
             const SizedBox(height: 10),
             _DockActionButton(
               icon: Icons.cameraswitch_outlined,
               label: '切换',
               size: railButtonSize,
-              onTap: _cameras.isNotEmpty && !_isPreparing && !_isSubmitting
+              onTap:
+                  _cameras.isNotEmpty &&
+                      !_isPreparing &&
+                      !_isSubmitting &&
+                      !_isRecordingVideo &&
+                      !_isFinalizingVideo
                   ? _toggleCamera
                   : null,
             ),
@@ -2762,7 +3105,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                   _canAnalyzeCurrentSelection &&
                       !_isPreparing &&
                       !_isCapturing &&
-                      !_isSubmitting
+                      !_isSubmitting &&
+                      !_isRecordingVideo &&
+                      !_isFinalizingVideo
                   ? _uploadAndAnalyze
                   : null,
             ),
@@ -2804,28 +3149,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           },
         ),
       ],
-    );
-  }
-
-  Widget _buildLandscapeStatusColumn() {
-    final statusItems = <({String label, String value})>[
-      (label: '模式', value: _shootModeLabel),
-      (label: '状态', value: _currentCaptureStatusLabel()),
-      (label: '识别', value: _poseDetectionStatusLabel()),
-    ];
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: statusItems
-          .map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 96),
-                child: _StatusPill(label: item.label, value: item.value),
-              ),
-            ),
-          )
-          .toList(growable: false),
     );
   }
 
@@ -2946,44 +3269,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         constraints: BoxConstraints(maxWidth: isLandscape ? 720 : 520),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            _buildStatusPills(isLandscape: isLandscape),
-            SizedBox(height: isLandscape ? 6 : 8),
-            Align(
-              alignment: Alignment.center,
-              child: _OverlayToggleBar(
-                settings: _overlaySettings,
-                onChanged: _updateOverlaySettings,
-                compact: isLandscape,
-                showTemplateToggle: false,
-              ),
-            ),
-            SizedBox(height: isLandscape ? 8 : 10),
-            _buildCaptureDock(isLandscape: isLandscape),
-          ],
+          children: <Widget>[_buildCaptureDock(isLandscape: isLandscape)],
         ),
       ),
-    );
-  }
-
-  Widget _buildStatusPills({required bool isLandscape}) {
-    final statusItems = <({String label, String value})>[
-      (label: '模式', value: _shootModeLabel),
-      if (_selectedTemplate != null)
-        (label: '模板', value: _selectedTemplate!.name),
-      (label: '状态', value: _currentCaptureStatusLabel()),
-      (label: '识别', value: _poseDetectionStatusLabel()),
-      if (_lastDeviceLinkResult != null)
-        (label: '联动', value: _deviceFlowStatusLabel()),
-    ];
-
-    return Wrap(
-      alignment: WrapAlignment.center,
-      spacing: isLandscape ? 6 : 8,
-      runSpacing: isLandscape ? 6 : 8,
-      children: statusItems
-          .map((item) => _StatusPill(label: item.label, value: item.value))
-          .toList(growable: false),
     );
   }
 
@@ -3019,8 +3307,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: _DockActionButton(
-                      icon: Icons.tune_rounded,
-                      label: '详情',
+                      icon: Icons.settings_outlined,
+                      label: '设置',
                       size: sideButtonSize,
                       onTap: _openDetailsSheet,
                       child: _buildRecentCaptureThumb(),
@@ -3036,7 +3324,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                           _canAnalyzeCurrentSelection &&
                               !_isPreparing &&
                               !_isCapturing &&
-                              !_isSubmitting
+                              !_isSubmitting &&
+                              !_isRecordingVideo &&
+                              !_isFinalizingVideo
                           ? _uploadAndAnalyze
                           : null,
                     ),
@@ -3046,7 +3336,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                     child: _ShutterButton(
                       size: shutterSize,
                       isBusy: _isCapturing,
-                      onTap: _isPreparing || _isCapturing || _isSubmitting
+                      onTap:
+                          _isPreparing ||
+                              _isCapturing ||
+                              _isSubmitting ||
+                              _isRecordingVideo ||
+                              _isFinalizingVideo
                           ? null
                           : _capturePhoto,
                     ),
@@ -3095,7 +3390,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                         onTap:
                             _cameras.isNotEmpty &&
                                 !_isPreparing &&
-                                !_isSubmitting
+                                !_isSubmitting &&
+                                !_isRecordingVideo &&
+                                !_isFinalizingVideo
                             ? _toggleCamera
                             : null,
                       ),
@@ -3103,6 +3400,22 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                   ),
                 ],
               ),
+            ),
+          ),
+        ),
+        SizedBox(height: isLandscape ? 8 : 10),
+        SizedBox(
+          width: isLandscape ? 220 : 260,
+          child: FilledButton.icon(
+            onPressed: _canToggleVideoRecording
+                ? () => unawaited(_toggleVideoRecording())
+                : null,
+            icon: _RecordingIcon(isRecording: _isRecordingVideo),
+            label: _RecordingDurationText(
+              startedAt: _recordingStartedAt,
+              isRecording: _isRecordingVideo,
+              idleLabel: '开始录像',
+              runningPrefix: '录制中 ',
             ),
           ),
         ),
@@ -3151,6 +3464,11 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Widget _buildRecentCaptureThumb() {
+    if (_lastRecordedVideo != null && _lastCapture == null) {
+      return const Center(
+        child: Icon(Icons.videocam_outlined, color: Colors.white, size: 22),
+      );
+    }
     if (_lastCapture == null) {
       return const Center(
         child: Icon(Icons.tune_rounded, color: Colors.white, size: 22),
@@ -3193,9 +3511,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Widget _buildResultsSheetContent(BuildContext sheetContext) {
     final orientation = MediaQuery.orientationOf(sheetContext);
     final hasRecentCapture = _lastCapture != null;
+    final hasRecentVideo = _lastRecordedVideo != null;
     final hasUploadResult = _captureSession != null || _lastAiTask != null;
     final hasDeviceResult = _lastDeviceLinkResult != null;
-    final hasAnyResult = hasRecentCapture || hasUploadResult || hasDeviceResult;
+    final hasAnyResult =
+        hasRecentCapture ||
+        hasRecentVideo ||
+        hasUploadResult ||
+        hasDeviceResult;
     final analysisSummary = _analysisSummaryLabel();
 
     return Column(
@@ -3203,7 +3526,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       children: <Widget>[
         if (!hasAnyResult) ...<Widget>[
           const SizedBox(height: 16),
-          const _SheetHintBlock(message: '拍摄后可在这里查看最近照片、分析结果和设备联动回流。'),
+          const _SheetHintBlock(message: '拍摄后可在这里查看最近照片、视频、分析结果和设备联动回流。'),
         ],
         if (hasAnyResult) ...<Widget>[
           const SizedBox(height: 16),
@@ -3231,6 +3554,10 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                         },
                       ),
                     ),
+                  )
+                else if (hasRecentVideo)
+                  _VideoResultCard(
+                    duration: _videoDurations[_lastRecordedVideo!.path],
                   ),
                 const SizedBox(height: 12),
                 Wrap(
@@ -3246,6 +3573,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                       _ResultTag(
                         label: '抓拍',
                         value: '#${_lastUploadedCapture!.id}',
+                      ),
+                    if (hasRecentVideo)
+                      _ResultTag(
+                        label: '视频',
+                        value: _formatDuration(
+                          _videoDurations[_lastRecordedVideo!.path],
+                        ),
                       ),
                   ],
                 ),
@@ -3325,13 +3659,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                         : null,
                   ),
                   _SheetActionButton(
-                    icon: _mirrorPreview
-                        ? Icons.flip_camera_android_outlined
-                        : Icons.flip_camera_android,
-                    label: _mirrorPreview ? '关闭画面镜像' : '开启画面镜像',
-                    onTap: _isPreparing ? null : _togglePreviewMirror,
-                  ),
-                  _SheetActionButton(
                     icon: Icons.router_outlined,
                     label: '进入设备联动',
                     onTap: _isPreparing || _isSubmitting
@@ -3340,6 +3667,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                             Navigator.of(sheetContext).pop();
                             await _openDeviceLinkPage();
                           },
+                  ),
+                  _SheetActionButton(
+                    icon: Icons.settings_outlined,
+                    label: '详细设置',
+                    onTap: () =>
+                        unawaited(_openDetailedSettingsPage(sheetContext)),
                   ),
                   if (_lastDeviceLinkResult != null)
                     _SheetActionButton(
@@ -3350,49 +3683,54 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                 ],
               ),
               const SizedBox(height: 14),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: <Widget>[
-                  _SheetStatCard(
-                    label: '镜头方向',
-                    value: _cameras.isEmpty
-                        ? '未就绪'
-                        : _lensDirectionLabel(_cameras[_selectedCameraIndex]),
-                  ),
-                  _SheetStatCard(
-                    label: '画面方向',
-                    value: _orientationLabel(orientation),
-                  ),
-                  _SheetStatCard(label: '画面镜像', value: _mirrorStatusLabel()),
-                  if (_selectedTemplate != null)
-                    _SheetStatCard(
-                      label: '当前模板',
-                      value: _selectedTemplate!.name,
-                    ),
-                ],
+              _SheetExpandableSection(
+                title: '取景辅助',
+                child: _OverlayToggleBar(
+                  settings: _overlaySettings,
+                  onChanged: _updateOverlaySettings,
+                  compact: true,
+                  showBodyToggle: true,
+                  showSkeletonToggle: true,
+                  showTemplateToggle: _selectedTemplate != null,
+                ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               _SheetExpandableSection(
                 title: _selectedTemplate == null
                     ? '模板（可选）'
                     : '模板（已选择：${_selectedTemplate!.name}）',
-                initiallyExpanded: _selectedTemplate != null,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: _buildTemplateSelectionContent(sheetContext),
+              ),
+              const SizedBox(height: 12),
+              _SheetExpandableSection(
+                title: '更多拍摄参数',
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
                   children: <Widget>[
-                    if (_selectedTemplate != null) ...<Widget>[
-                      _OverlayToggleBar(
-                        settings: _overlaySettings,
-                        onChanged: _updateOverlaySettings,
-                        compact: true,
-                        showBodyToggle: false,
-                        showSkeletonToggle: false,
-                        showTemplateToggle: true,
+                    _SheetActionButton(
+                      icon: _mirrorPreview
+                          ? Icons.flip_camera_android_outlined
+                          : Icons.flip_camera_android,
+                      label: _mirrorPreview ? '关闭画面镜像' : '开启画面镜像',
+                      onTap: _isPreparing ? null : _togglePreviewMirror,
+                    ),
+                    _SheetStatCard(
+                      label: '镜头方向',
+                      value: _cameras.isEmpty
+                          ? '未就绪'
+                          : _lensDirectionLabel(_cameras[_selectedCameraIndex]),
+                    ),
+                    _SheetStatCard(
+                      label: '画面方向',
+                      value: _orientationLabel(orientation),
+                    ),
+                    _SheetStatCard(label: '画面镜像', value: _mirrorStatusLabel()),
+                    if (_selectedTemplate != null)
+                      _SheetStatCard(
+                        label: '当前模板',
+                        value: _selectedTemplate!.name,
                       ),
-                      const SizedBox(height: 12),
-                    ],
-                    _buildTemplateSelectionContent(sheetContext),
                   ],
                 ),
               ),
@@ -3400,8 +3738,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           ),
         ),
         const SizedBox(height: 16),
-        _SheetSection(
-          title: '当前状态',
+        _SheetExpandableSection(
+          title: '更多状态',
           child: Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -3422,7 +3760,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           ),
         ),
         const SizedBox(height: 16),
-        _SheetSection(
+        _SheetExpandableSection(
           title: '拍摄详情',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3560,6 +3898,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
                           onTap: () {
                             _selectTemplate(template);
                           },
+                          onDelete: template.isRecommendedDefault
+                              ? null
+                              : () async {
+                                  Navigator.of(sheetContext).pop();
+                                  await _deleteTemplate(template);
+                                },
                         ),
                       );
                     })
@@ -4069,6 +4413,7 @@ class _TemplatePreviewCard extends StatelessWidget {
     required this.onTap,
     this.imageUrl,
     this.meta,
+    this.onDelete,
   });
 
   final String name;
@@ -4076,6 +4421,7 @@ class _TemplatePreviewCard extends StatelessWidget {
   final String? meta;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -4139,6 +4485,30 @@ class _TemplatePreviewCard extends StatelessWidget {
                           Icons.check,
                           size: 15,
                           color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  if (onDelete != null)
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: Tooltip(
+                        message: '删除模板',
+                        child: Material(
+                          color: Colors.black.withValues(alpha: 0.48),
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: onDelete,
+                            child: const Padding(
+                              padding: EdgeInsets.all(5),
+                              child: Icon(
+                                Icons.delete_outline,
+                                size: 15,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -4218,6 +4588,69 @@ class _CapturePlaceholder extends StatelessWidget {
   }
 }
 
+class _VideoResultCard extends StatelessWidget {
+  const _VideoResultCard({this.duration});
+
+  final Duration? duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final durationLabel = duration == null || duration == Duration.zero
+        ? '--:--'
+        : '${duration!.inMinutes.toString().padLeft(2, '0')}:${duration!.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2328),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x330D5C63)),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.videocam_outlined,
+              color: Colors.white,
+              size: 30,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  '最近一段视频',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '时长 $durationLabel · 已保存到手机相册',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.68),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MessageBanner extends StatelessWidget {
   const _MessageBanner({required this.message, required this.backgroundColor});
 
@@ -4269,55 +4702,6 @@ class _GlassIconButton extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed,
           icon: Icon(icon, color: Colors.white, size: 20),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 172),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.26),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                '$label ',
-                style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Flexible(
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -4459,6 +4843,70 @@ class _ShutterButton extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RecordingIcon extends StatelessWidget {
+  const _RecordingIcon({required this.isRecording});
+
+  final bool isRecording;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        Icon(isRecording ? Icons.videocam_outlined : Icons.videocam),
+        if (isRecording)
+          Positioned(
+            right: -2,
+            top: -2,
+            child: Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE53935),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RecordingDurationText extends StatelessWidget {
+  const _RecordingDurationText({
+    required this.startedAt,
+    required this.isRecording,
+    required this.idleLabel,
+    required this.runningPrefix,
+  });
+
+  final DateTime? startedAt;
+  final bool isRecording;
+  final String idleLabel;
+  final String runningPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isRecording || startedAt == null) {
+      return Text(idleLabel);
+    }
+    return StreamBuilder<int>(
+      stream: Stream<int>.periodic(const Duration(seconds: 1), (tick) => tick),
+      builder: (context, _) {
+        final duration = DateTime.now().difference(startedAt!);
+        return Text('$runningPrefix${_formatLiveRecordingDuration(duration)}');
+      },
+    );
+  }
+}
+
+String _formatLiveRecordingDuration(Duration duration) {
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds.remainder(60);
+  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 }
 
 class _BottomSheetShell extends StatelessWidget {
@@ -4718,15 +5166,10 @@ class _SheetSection extends StatelessWidget {
 }
 
 class _SheetExpandableSection extends StatelessWidget {
-  const _SheetExpandableSection({
-    required this.title,
-    required this.child,
-    this.initiallyExpanded = false,
-  });
+  const _SheetExpandableSection({required this.title, required this.child});
 
   final String title;
   final Widget child;
-  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -4739,7 +5182,6 @@ class _SheetExpandableSection extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: initiallyExpanded,
           tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
           childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           collapsedIconColor: Colors.white70,

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies import get_current_user, get_db_session
@@ -39,29 +41,67 @@ from backend.app.services.mobile_service import MobileService
 
 router = APIRouter(prefix="/mobile", tags=["mobile"])
 
+_IMAGE_UPLOAD_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+_VIDEO_UPLOAD_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm", ".3gp"}
+_CAPTURE_UPLOAD_SUFFIXES = _IMAGE_UPLOAD_SUFFIXES | _VIDEO_UPLOAD_SUFFIXES
+
 
 def _build_upload_file_parts(upload: UploadFile) -> tuple[str, str]:
-    original_name = Path(upload.filename or "capture.jpg").name
+    original_name = Path(upload.filename or "capture").name
     suffix = Path(original_name).suffix.lower()
-    if not suffix:
+    if suffix not in _CAPTURE_UPLOAD_SUFFIXES:
         content_type = (upload.content_type or "").lower()
         if content_type == "image/png":
             suffix = ".png"
         elif content_type == "image/webp":
             suffix = ".webp"
+        elif content_type in {"video/quicktime"}:
+            suffix = ".mov"
+        elif content_type == "video/webm":
+            suffix = ".webm"
+        elif content_type == "video/3gpp":
+            suffix = ".3gp"
+        elif content_type in {"video/mp4", "video/x-m4v"}:
+            suffix = ".mp4"
         else:
             suffix = ".jpg"
     return original_name, suffix
 
 
-def _is_supported_image_upload(upload: UploadFile) -> bool:
+def _is_supported_capture_upload(upload: UploadFile) -> bool:
     content_type = (upload.content_type or "").lower()
-    if content_type.startswith("image/"):
+    if content_type.startswith("image/") or content_type.startswith("video/"):
         return True
 
     filename = Path(upload.filename or "").name.lower()
     suffix = Path(filename).suffix.lower()
-    return suffix in {".jpg", ".jpeg", ".png", ".webp"}
+    return suffix in _CAPTURE_UPLOAD_SUFFIXES
+
+
+def _is_supported_ai_image_upload(upload: UploadFile) -> bool:
+    content_type = (upload.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+    suffix = Path(upload.filename or "").suffix.lower()
+    return suffix in _IMAGE_UPLOAD_SUFFIXES
+
+
+def _parse_json_form_object(raw: str | None, *, default):
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid json form field") from exc
+
+
+def _write_temp_ai_upload(upload: UploadFile) -> Path:
+    original_name, suffix = _build_upload_file_parts(upload)
+    if suffix not in _IMAGE_UPLOAD_SUFFIXES:
+        suffix = ".jpg"
+    with tempfile.NamedTemporaryFile(prefix="camera_assistant_ai_", suffix=suffix, delete=False) as temp_file:
+        temp_file.write(upload.file.read())
+        return Path(temp_file.name)
 
 
 def _store_capture_upload(request: Request, current_user: User, upload: UploadFile) -> CaptureUploadRead:
@@ -179,8 +219,8 @@ def upload_capture_file(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ) -> ApiResponse[CaptureUploadRead]:
-    if not _is_supported_image_upload(file):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image uploads are supported")
+    if not _is_supported_capture_upload(file):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image or video uploads are supported")
     upload_data = _store_capture_upload(request, current_user, file)
     return ApiResponse(message="capture file uploaded", data=upload_data)
 
@@ -213,6 +253,51 @@ def batch_pick(
 ) -> ApiResponse[BatchPickResult]:
     task, best_capture_id = MobileService(session).create_batch_pick_task(current_user, payload)
     return ApiResponse(data=BatchPickResult(task=AiTaskRead.model_validate(task), best_capture_id=best_capture_id))
+
+
+@router.post("/ai/analyze-scan", response_model=ApiResponse[AiTaskRead])
+def analyze_scan(
+    files: list[UploadFile] = File(...),
+    task_type: str = Form("auto_angle"),
+    candidates_json: str = Form("[]"),
+    metadata_json: str = Form("{}"),
+    device_id: int | None = Form(None),
+    session: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[AiTaskRead]:
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="at least one scan image is required")
+    if len(files) > 12:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scan allows at most 12 images")
+    for upload in files:
+        if not _is_supported_ai_image_upload(upload):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image uploads are supported")
+
+    candidates = _parse_json_form_object(candidates_json, default=[])
+    metadata = _parse_json_form_object(metadata_json, default={})
+    if not isinstance(candidates, list) or len(candidates) != len(files):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="candidate metadata must match image count")
+    if not isinstance(metadata, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="metadata must be an object")
+
+    temp_paths: list[Path] = []
+    try:
+        temp_paths = [_write_temp_ai_upload(upload) for upload in files]
+        task = MobileService(session).create_ephemeral_scan_analysis_task(
+            current_user,
+            image_paths=temp_paths,
+            candidates=candidates,
+            task_type=task_type,
+            request_payload=metadata,
+            device_id=device_id,
+        )
+        return ApiResponse(data=AiTaskRead.model_validate(task))
+    finally:
+        for path in temp_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 @router.get("/ai/tasks/{task_id}", response_model=ApiResponse[AiTaskRead])

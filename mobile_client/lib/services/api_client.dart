@@ -83,6 +83,26 @@ class ApiClient {
     return _decodeEnvelope(response);
   }
 
+  Future<Map<String, dynamic>> postMultipartFiles(
+    String path, {
+    required String fileField,
+    required List<String> filePaths,
+    Map<String, String> fields = const <String, String>{},
+    String? accessToken,
+  }) async {
+    final request = http.MultipartRequest('POST', Uri.parse('$_baseUrl$path'));
+    request.headers.addAll(
+      _buildHeaders(accessToken: accessToken, isJson: false),
+    );
+    request.fields.addAll(fields);
+    for (final filePath in filePaths) {
+      request.files.add(await http.MultipartFile.fromPath(fileField, filePath));
+    }
+    final streamedResponse = await _sendStream(() => request.send());
+    final response = await http.Response.fromStream(streamedResponse);
+    return _decodeEnvelope(response);
+  }
+
   static String _normalizeBaseUrl(String baseUrl) {
     if (baseUrl.endsWith('/')) {
       return baseUrl.substring(0, baseUrl.length - 1);
@@ -154,9 +174,7 @@ class ApiClient {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } on FormatException {
       throw ApiException(
-        response.statusCode >= 500
-            ? '服务暂时不可用，请稍后重试。'
-            : '服务返回了无法识别的数据，请稍后重试。',
+        response.statusCode >= 500 ? '服务暂时不可用，请稍后重试。' : '服务返回了无法识别的数据，请稍后重试。',
         statusCode: response.statusCode,
       );
     }

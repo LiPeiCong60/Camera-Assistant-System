@@ -86,6 +86,8 @@ class OverlayScene {
     required this.templateBox,
     required this.templateSegments,
     required this.templateHeadBox,
+    this.templateShoulderCenter,
+    this.templateFaceCenter,
   });
 
   final NormalizedRect bodyBox;
@@ -93,6 +95,8 @@ class OverlayScene {
   final NormalizedRect templateBox;
   final List<OverlaySegment> templateSegments;
   final NormalizedRect templateHeadBox;
+  final NormalizedPoint? templateShoulderCenter;
+  final NormalizedPoint? templateFaceCenter;
 
   OverlayScene copyWith({
     NormalizedRect? bodyBox,
@@ -100,6 +104,8 @@ class OverlayScene {
     NormalizedRect? templateBox,
     List<OverlaySegment>? templateSegments,
     NormalizedRect? templateHeadBox,
+    NormalizedPoint? templateShoulderCenter,
+    NormalizedPoint? templateFaceCenter,
   }) {
     return OverlayScene(
       bodyBox: bodyBox ?? this.bodyBox,
@@ -107,6 +113,9 @@ class OverlayScene {
       templateBox: templateBox ?? this.templateBox,
       templateSegments: templateSegments ?? this.templateSegments,
       templateHeadBox: templateHeadBox ?? this.templateHeadBox,
+      templateShoulderCenter:
+          templateShoulderCenter ?? this.templateShoulderCenter,
+      templateFaceCenter: templateFaceCenter ?? this.templateFaceCenter,
     );
   }
 
@@ -128,6 +137,8 @@ class OverlayScene {
       templateBox: NormalizedRect(left: 0, top: 0, width: 0, height: 0),
       templateSegments: <OverlaySegment>[],
       templateHeadBox: NormalizedRect(left: 0, top: 0, width: 0, height: 0),
+      templateShoulderCenter: null,
+      templateFaceCenter: null,
     );
   }
 
@@ -181,6 +192,8 @@ class OverlayScene {
           top + bodyBox.height * 0.01,
         ),
       ),
+      templateShoulderCenter: null,
+      templateFaceCenter: null,
     );
   }
 
@@ -214,6 +227,9 @@ class OverlayScene {
         _legacyTemplateSegments(templateData['pose_points']),
       );
     }
+    if (templateSegments.length < 6 && templateBox != null) {
+      templateSegments.addAll(_syntheticTemplateSegments(templateBox));
+    }
     final templateHeadBox = _templateHeadBox(
       templateData,
       imagePoints: imagePoints,
@@ -224,6 +240,17 @@ class OverlayScene {
         _templateHeadGuideSegments(templateHeadBox, imagePoints: imagePoints),
       );
     }
+    final templateShoulderCenter = _templateShoulderCenter(
+      templateData,
+      imagePoints: imagePoints,
+      bodyBox: templateBox,
+    );
+    final templateFaceCenter = _templateFaceCenter(
+      templateData,
+      imagePoints: imagePoints,
+      headBox: templateHeadBox,
+      bodyBox: templateBox,
+    );
 
     return OverlayScene(
       bodyBox: const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
@@ -235,6 +262,8 @@ class OverlayScene {
       templateHeadBox:
           templateHeadBox ??
           const NormalizedRect(left: 0, top: 0, width: 0, height: 0),
+      templateShoulderCenter: templateShoulderCenter,
+      templateFaceCenter: templateFaceCenter,
     );
   }
 
@@ -285,7 +314,66 @@ class OverlayScene {
         width: 0.14,
         height: 0.12,
       ),
+      templateShoulderCenter: const NormalizedPoint(0.50, 0.32),
+      templateFaceCenter: const NormalizedPoint(0.50, 0.18),
     );
+  }
+
+  static List<OverlaySegment> _syntheticTemplateSegments(
+    NormalizedRect bodyBox,
+  ) {
+    final left = bodyBox.left;
+    final top = bodyBox.top;
+    final width = bodyBox.width;
+    final height = bodyBox.height;
+    final centerX = left + width * 0.5;
+    final head = NormalizedPoint(centerX, top + height * 0.12);
+    final neck = NormalizedPoint(centerX, top + height * 0.23);
+    final leftShoulder = NormalizedPoint(
+      left + width * 0.32,
+      top + height * 0.28,
+    );
+    final rightShoulder = NormalizedPoint(
+      left + width * 0.68,
+      top + height * 0.28,
+    );
+    final leftElbow = NormalizedPoint(left + width * 0.22, top + height * 0.43);
+    final rightElbow = NormalizedPoint(
+      left + width * 0.78,
+      top + height * 0.43,
+    );
+    final leftWrist = NormalizedPoint(left + width * 0.26, top + height * 0.58);
+    final rightWrist = NormalizedPoint(
+      left + width * 0.74,
+      top + height * 0.58,
+    );
+    final leftHip = NormalizedPoint(left + width * 0.40, top + height * 0.58);
+    final rightHip = NormalizedPoint(left + width * 0.60, top + height * 0.58);
+    final leftKnee = NormalizedPoint(left + width * 0.38, top + height * 0.78);
+    final rightKnee = NormalizedPoint(left + width * 0.62, top + height * 0.78);
+    final leftAnkle = NormalizedPoint(left + width * 0.36, top + height * 0.96);
+    final rightAnkle = NormalizedPoint(
+      left + width * 0.64,
+      top + height * 0.96,
+    );
+
+    return <OverlaySegment>[
+      OverlaySegment(head, neck),
+      OverlaySegment(neck, leftShoulder),
+      OverlaySegment(neck, rightShoulder),
+      OverlaySegment(leftShoulder, rightShoulder),
+      OverlaySegment(leftShoulder, leftElbow),
+      OverlaySegment(leftElbow, leftWrist),
+      OverlaySegment(rightShoulder, rightElbow),
+      OverlaySegment(rightElbow, rightWrist),
+      OverlaySegment(leftShoulder, leftHip),
+      OverlaySegment(rightShoulder, rightHip),
+      OverlaySegment(leftHip, rightHip),
+      OverlaySegment(leftHip, leftKnee),
+      OverlaySegment(leftKnee, leftAnkle),
+      OverlaySegment(rightHip, rightKnee),
+      OverlaySegment(rightKnee, rightAnkle),
+    ];
   }
 
   static List<OverlaySegment> _templateSegmentsFromSkeleton(
@@ -481,6 +569,107 @@ class OverlayScene {
     }
 
     return null;
+  }
+
+  static NormalizedPoint? _templateShoulderCenter(
+    Map<String, dynamic> templateData, {
+    required Map<int, NormalizedPoint> imagePoints,
+    required NormalizedRect? bodyBox,
+  }) {
+    final explicit = _anchorPoint(
+      templateData,
+      xKey: 'shoulder_anchor_norm_x',
+      yKey: 'shoulder_anchor_norm_y',
+    );
+    if (explicit != null) {
+      return explicit;
+    }
+
+    final leftShoulder = imagePoints[11];
+    final rightShoulder = imagePoints[12];
+    if (leftShoulder != null && rightShoulder != null) {
+      return NormalizedPoint(
+        _clamp01((leftShoulder.x + rightShoulder.x) * 0.5),
+        _clamp01((leftShoulder.y + rightShoulder.y) * 0.5),
+      );
+    }
+    if (leftShoulder != null) {
+      return leftShoulder;
+    }
+    if (rightShoulder != null) {
+      return rightShoulder;
+    }
+    if (bodyBox != null && bodyBox.width > 0 && bodyBox.height > 0) {
+      return NormalizedPoint(
+        _clamp01(bodyBox.left + bodyBox.width * 0.5),
+        _clamp01(bodyBox.top + bodyBox.height * 0.28),
+      );
+    }
+    return null;
+  }
+
+  static NormalizedPoint? _templateFaceCenter(
+    Map<String, dynamic> templateData, {
+    required Map<int, NormalizedPoint> imagePoints,
+    required NormalizedRect? headBox,
+    required NormalizedRect? bodyBox,
+  }) {
+    final explicit = _anchorPoint(
+      templateData,
+      xKey: 'face_anchor_norm_x',
+      yKey: 'face_anchor_norm_y',
+    );
+    if (explicit != null) {
+      return explicit;
+    }
+    final headAnchor = _anchorPoint(
+      templateData,
+      xKey: 'head_anchor_norm_x',
+      yKey: 'head_anchor_norm_y',
+    );
+    if (headAnchor != null) {
+      return headAnchor;
+    }
+
+    final facePoints = <NormalizedPoint>[
+      for (final index in <int>[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        if (imagePoints[index] != null) imagePoints[index]!,
+    ];
+    if (facePoints.isNotEmpty) {
+      final x =
+          facePoints.fold<double>(0, (sum, point) => sum + point.x) /
+          facePoints.length;
+      final y =
+          facePoints.fold<double>(0, (sum, point) => sum + point.y) /
+          facePoints.length;
+      return NormalizedPoint(_clamp01(x), _clamp01(y));
+    }
+    if (headBox != null && headBox.width > 0 && headBox.height > 0) {
+      return NormalizedPoint(
+        _clamp01(headBox.left + headBox.width * 0.5),
+        _clamp01(headBox.top + headBox.height * 0.5),
+      );
+    }
+    if (bodyBox != null && bodyBox.width > 0 && bodyBox.height > 0) {
+      return NormalizedPoint(
+        _clamp01(bodyBox.left + bodyBox.width * 0.5),
+        _clamp01(bodyBox.top + bodyBox.height * 0.14),
+      );
+    }
+    return null;
+  }
+
+  static NormalizedPoint? _anchorPoint(
+    Map<String, dynamic> templateData, {
+    required String xKey,
+    required String yKey,
+  }) {
+    final x = _toDouble(templateData[xKey]);
+    final y = _toDouble(templateData[yKey]);
+    if (x == null || y == null) {
+      return null;
+    }
+    return NormalizedPoint(_clamp01(x), _clamp01(y));
   }
 
   static NormalizedRect? _expandedRectFromPoints(

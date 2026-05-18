@@ -21,6 +21,7 @@ class CaptureResult:
     path: str | None
     analysis: CaptureAnalysis | None = None
     analysis_error: str | None = None
+    mobile_capture_request: dict[str, Any] | None = None
 
 
 class CaptureService:

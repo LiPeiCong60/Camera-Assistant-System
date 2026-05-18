@@ -87,16 +87,37 @@ class AiTaskSummary {
   }
 
   static List<double>? _readTargetBoxNorm(dynamic value) {
-    if (value is! List<dynamic> || value.length != 4) {
-      return null;
+    if (value is Map) {
+      final x = _readNum(value['x'])?.toDouble();
+      final y = _readNum(value['y'])?.toDouble();
+      final w = _readNum(value['w'])?.toDouble();
+      final h = _readNum(value['h'])?.toDouble();
+      if (x == null || y == null || w == null || h == null) {
+        return null;
+      }
+      return <double>[
+        _clampUnit(x),
+        _clampUnit(y),
+        _clampUnit(w),
+        _clampUnit(h),
+      ];
     }
-    final numbers = value
-        .map((item) => _readNum(item)?.toDouble())
-        .toList(growable: false);
-    if (numbers.any((item) => item == null)) {
-      return null;
+    if (value is List<dynamic> && value.length == 4) {
+      final x = _readNum(value[0])?.toDouble();
+      final y = _readNum(value[1])?.toDouble();
+      final w = _readNum(value[2])?.toDouble();
+      final h = _readNum(value[3])?.toDouble();
+      if (x == null || y == null || w == null || h == null) {
+        return null;
+      }
+      return <double>[
+        _clampUnit(x),
+        _clampUnit(y),
+        _clampUnit(w),
+        _clampUnit(h),
+      ];
     }
-    return numbers.cast<double>();
+    return null;
   }
 
   static num? _readNum(dynamic value) {
@@ -107,5 +128,9 @@ class AiTaskSummary {
       return num.tryParse(value.trim());
     }
     return null;
+  }
+
+  static double _clampUnit(double value) {
+    return value.clamp(0, 1).toDouble();
   }
 }

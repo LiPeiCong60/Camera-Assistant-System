@@ -21,10 +21,15 @@ class _AiScanConfig {
 }
 
 class _AiScanConfigDialog extends StatefulWidget {
-  const _AiScanConfigDialog({required this.title, required this.includeDelay});
+  const _AiScanConfigDialog({
+    required this.title,
+    required this.includeDelay,
+    required this.initialConfig,
+  });
 
   final String title;
   final bool includeDelay;
+  final _AiScanConfig initialConfig;
 
   @override
   State<_AiScanConfigDialog> createState() => _AiScanConfigDialogState();
@@ -43,13 +48,35 @@ class _AiScanConfigDialogState extends State<_AiScanConfigDialog> {
   @override
   void initState() {
     super.initState();
-    _panRangeController = TextEditingController(text: '6');
-    _tiltRangeController = TextEditingController(text: '3');
-    _panStepController = TextEditingController(text: '4');
-    _tiltStepController = TextEditingController(text: '3');
-    _maxCandidatesController = TextEditingController(text: '5');
-    _settleController = TextEditingController(text: '0.5');
-    _delayController = TextEditingController(text: '0');
+    final config = widget.initialConfig;
+    _panRangeController = TextEditingController(
+      text: _formatInitialNumber(config.panRange),
+    );
+    _tiltRangeController = TextEditingController(
+      text: _formatInitialNumber(config.tiltRange),
+    );
+    _panStepController = TextEditingController(
+      text: _formatInitialNumber(config.panStep),
+    );
+    _tiltStepController = TextEditingController(
+      text: _formatInitialNumber(config.tiltStep),
+    );
+    _maxCandidatesController = TextEditingController(
+      text: config.maxCandidates.toString(),
+    );
+    _settleController = TextEditingController(
+      text: _formatInitialNumber(config.settleSeconds),
+    );
+    _delayController = TextEditingController(
+      text: _formatInitialNumber(config.delaySeconds),
+    );
+  }
+
+  String _formatInitialNumber(double value) {
+    if (value == value.roundToDouble()) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(1);
   }
 
   @override
@@ -89,7 +116,7 @@ class _AiScanConfigDialogState extends State<_AiScanConfigDialog> {
         panStep < 0.8 ||
         tiltStep < 0.8 ||
         maxCandidates < 2 ||
-        maxCandidates > 9 ||
+        maxCandidates > 12 ||
         settleSeconds < 0.1 ||
         delaySeconds < 0) {
       setState(() {

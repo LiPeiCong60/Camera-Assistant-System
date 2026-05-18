@@ -30,4 +30,5 @@ class RuntimeState:
     last_runtime_error: str | None = None
     last_frame_at: float | None = None
     last_detection_at: float | None = None
+    external_track_control_until: float = 0.0
     loop_running: bool = False

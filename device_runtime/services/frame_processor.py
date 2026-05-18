@@ -172,6 +172,8 @@ class FrameProcessor:
                 self._mode_manager.mode == ControlMode.AUTO_TRACK
                 or compose_auto_control
             )
+            if now < float(self._runtime_state.external_track_control_until):
+                should_auto_move = False
             if ai_lock_mode_enabled:
                 should_auto_move = False
 

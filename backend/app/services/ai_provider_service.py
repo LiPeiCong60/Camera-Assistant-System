@@ -10,15 +10,19 @@ import mimetypes
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Sequence
 from urllib.parse import unquote, urlparse
 
 import httpx
 
+from backend.app.core.contract import (
+    DEFAULT_TARGET_BOX_NORM,
+    normalize_ai_task_type,
+    normalize_target_box_norm,
+)
 from backend.app.models.ai_provider_config import AiProviderConfig
 from backend.app.models.capture import Capture
-
-DEFAULT_TARGET_BOX_NORM: tuple[float, float, float, float] = (0.38, 0.18, 0.24, 0.66)
 
 
 def _normalize_score_100(raw_score: Any) -> float:
@@ -57,6 +61,16 @@ class AiProviderService:
             expected_task_type="analyze_photo",
         )
 
+    def analyze_photo_file(
+        self,
+        image_path: Path,
+        provider_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.analyze_photo(
+            self._ephemeral_capture(image_path, capture_type="ephemeral_ai_photo"),
+            provider_metadata,
+        )
+
     def analyze_background(self, capture: Capture, provider_metadata: dict[str, Any]) -> dict[str, Any]:
         return self._invoke_structured_vision_task(
             capture=capture,
@@ -66,8 +80,169 @@ class AiProviderService:
                 "Return only JSON for a better camera lock position. "
                 "Keep `summary` in Simplified Chinese."
             ),
-            expected_task_type="background_lock",
+            expected_task_type="analyze_background",
         )
+
+    def analyze_background_file(
+        self,
+        image_path: Path,
+        provider_metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.analyze_background(
+            self._ephemeral_capture(image_path, capture_type="ephemeral_ai_background"),
+            provider_metadata,
+        )
+
+    def analyze_scan_files(
+        self,
+        image_paths: Sequence[Path],
+        candidates: Sequence[dict[str, Any]],
+        provider_metadata: dict[str, Any],
+        *,
+        expected_task_type: str,
+    ) -> dict[str, Any]:
+        if not image_paths:
+            raise AiProviderInvocationError("scan analysis requires at least one image")
+        if len(image_paths) != len(candidates):
+            raise AiProviderInvocationError("scan image count does not match candidate count")
+        if self.config.provider_format != "openai_compatible":
+            raise AiProviderInvocationError(
+                f"provider_format `{self.config.provider_format}` is not supported yet"
+            )
+        if not self.config.api_base_url:
+            raise AiProviderInvocationError("api_base_url is missing")
+        if self._provider_requires_api_key() and not self.config.api_key:
+            raise AiProviderInvocationError("api_key is missing")
+        if not self.config.model_name:
+            raise AiProviderInvocationError("model_name is missing")
+
+        endpoint = self._normalize_chat_endpoint(self.config.api_base_url)
+        extra_config = self.config.extra_config or {}
+        timeout_seconds = float(extra_config.get("timeout_seconds", 90))
+        max_tokens = int(extra_config.get("max_tokens", 1000))
+        temperature = float(extra_config.get("temperature", 0.2))
+        messages = self._build_scan_messages(
+            image_paths=image_paths,
+            candidates=candidates,
+            expected_task_type=expected_task_type,
+        )
+        payload = {
+            "model": self.config.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }
+        if self._uses_longcat_vision_format():
+            payload["sessionId"] = f"scan_{normalize_ai_task_type(expected_task_type)}_{len(image_paths)}"
+            payload["topP"] = 0.1
+            payload["topK"] = 1
+            payload["textRepetitionPenalty"] = 1.0
+            payload["audioRepetitionPenalty"] = 1.1
+            payload["inferenceCount"] = 1
+            payload["output_modalities"] = ["text"]
+
+        try:
+            raw_response = self._post_provider_json(
+                endpoint=endpoint,
+                headers=self._build_provider_headers(),
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+            )
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:500]
+            self._log_provider_http_error(endpoint, payload, exc.response.status_code, exc.response.text)
+            raise AiProviderInvocationError(
+                f"provider returned HTTP {exc.response.status_code}: {detail}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise AiProviderInvocationError(f"provider request failed: {exc}") from exc
+        except ValueError as exc:
+            raise AiProviderInvocationError("provider response is not valid JSON") from exc
+
+        content_text = self._extract_message_text(raw_response)
+        result = self._parse_scan_result(content_text, candidates, expected_task_type)
+        result["provider_metadata"] = {
+            **provider_metadata,
+            "mode": "real_provider",
+            "request_endpoint": endpoint,
+            "response_id": raw_response.get("id"),
+            "usage": raw_response.get("usage"),
+        }
+        return result
+
+    def _ephemeral_capture(self, image_path: Path, *, capture_type: str):
+        return SimpleNamespace(
+            id=0,
+            session_id=0,
+            score=0,
+            capture_type=capture_type,
+            file_url=str(image_path),
+            capture_metadata={"storage_path": str(image_path)},
+        )
+
+    def _build_scan_messages(
+        self,
+        *,
+        image_paths: Sequence[Path],
+        candidates: Sequence[dict[str, Any]],
+        expected_task_type: str,
+    ) -> list[dict[str, Any]]:
+        normalized_task_type = normalize_ai_task_type(expected_task_type)
+        is_background = normalized_task_type == "analyze_background"
+        system_prompt = (
+            "You are a camera composition assistant. Respond with valid JSON only. "
+            "Compare all candidate images in one batch and choose the best one. "
+            "All scores must use a 0-100 scale. "
+            "JSON schema: {"
+            '"task_type":"auto_angle|analyze_background",'
+            '"best_candidate_index":<integer>,'
+            '"recommended_pan_delta":<number>,'
+            '"recommended_tilt_delta":<number>,'
+            '"target_box_norm":{"x":<number>,"y":<number>,"w":<number>,"h":<number>,"label":"recommended_person_position"},'
+            '"summary":"<Simplified Chinese>",'
+            '"score":<number>'
+            "}."
+        )
+        text_prompt = (
+            "这些图片是手机控制云台在不同候选角度拍到的临时帧，不是最终照片。"
+            "请比较所有候选，选择构图/背景最好的候选。"
+            "best_candidate_index 必须使用候选里给出的 candidate_index。"
+        )
+        if is_background:
+            text_prompt += " 背景锁定时必须返回最佳候选画面中的 target_box_norm。"
+        else:
+            text_prompt += " 自动找角度时如果最佳候选已经合适，recommended deltas 可以接近 0。"
+
+        image_format = "longcat" if self._uses_longcat_vision_format() else "openai"
+        user_content: list[dict[str, Any]] = [{"type": "text", "text": text_prompt}]
+        for image_path, candidate in zip(image_paths, candidates):
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"candidate_index={candidate.get('candidate_index')}, "
+                        f"pan_offset={candidate.get('pan_offset')}, "
+                        f"tilt_offset={candidate.get('tilt_offset')}"
+                    ),
+                }
+            )
+            user_content.append(
+                self._build_image_content(
+                    self._ephemeral_capture(image_path, capture_type="ephemeral_scan"),
+                    format_style=image_format,
+                )
+            )
+
+        if self._uses_longcat_vision_format():
+            return [
+                {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+                {"role": "user", "content": user_content},
+            ]
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
 
     def batch_pick(self, captures: Sequence[Capture], provider_metadata: dict[str, Any]) -> dict[str, Any]:
         if not captures:
@@ -246,7 +421,7 @@ class AiProviderService:
             '"task_type": "<string>", '
             '"recommended_pan_delta": <number>, '
             '"recommended_tilt_delta": <number>, '
-            '"target_box_norm": [x, y, w, h], '
+            '"target_box_norm": {"x": <number>, "y": <number>, "w": <number>, "h": <number>, "label": "recommended_person_position"}, '
             '"summary": "<string>", '
             '"score": <number>'
             "}."
@@ -785,11 +960,11 @@ class AiProviderService:
         if not isinstance(parsed, dict):
             return self._build_fallback_structured_result(content_text, expected_task_type)
 
-        task_type = str(parsed.get("task_type") or expected_task_type).strip() or expected_task_type
-        normalized_box = [
-            round(item, 4)
-            for item in self._safe_box_norm(parsed.get("target_box_norm"))
-        ]
+        task_type = normalize_ai_task_type(parsed.get("task_type"), default=expected_task_type)
+        normalized_box = normalize_target_box_norm(
+            parsed.get("target_box_norm"),
+            default=DEFAULT_TARGET_BOX_NORM,
+        )
         recommended_pan_delta = round(
             self._coerce_float(parsed.get("recommended_pan_delta", 0.0), minimum=-20.0, maximum=20.0),
             2,
@@ -840,6 +1015,61 @@ class AiProviderService:
             "score": score,
         }
 
+    def _parse_scan_result(
+        self,
+        content_text: str,
+        candidates: Sequence[dict[str, Any]],
+        expected_task_type: str,
+    ) -> dict[str, Any]:
+        valid_indexes = {
+            int(candidate.get("candidate_index"))
+            for candidate in candidates
+            if isinstance(candidate.get("candidate_index"), int)
+        }
+        fallback_best_index = min(valid_indexes) if valid_indexes else 1
+
+        parsed = self._extract_json_object(content_text)
+        if not isinstance(parsed, dict):
+            result = self._build_fallback_structured_result(content_text, expected_task_type)
+            result["best_candidate_index"] = fallback_best_index
+            return result
+
+        raw_best_index = parsed.get("best_candidate_index")
+        try:
+            best_candidate_index = int(raw_best_index)
+        except (TypeError, ValueError):
+            best_candidate_index = fallback_best_index
+        if valid_indexes and best_candidate_index not in valid_indexes:
+            best_candidate_index = min(valid_indexes)
+
+        task_type = normalize_ai_task_type(parsed.get("task_type"), default=expected_task_type)
+        normalized_box = normalize_target_box_norm(
+            parsed.get("target_box_norm"),
+            default=DEFAULT_TARGET_BOX_NORM,
+        )
+        recommended_pan_delta = round(
+            self._coerce_float(parsed.get("recommended_pan_delta", 0.0), minimum=-20.0, maximum=20.0),
+            2,
+        )
+        recommended_tilt_delta = round(
+            self._coerce_float(parsed.get("recommended_tilt_delta", 0.0), minimum=-15.0, maximum=15.0),
+            2,
+        )
+        score = round(_normalize_score_100(parsed.get("score", 0.0)), 2)
+        summary = str(parsed.get("summary") or "").strip() or self._build_fallback_summary(
+            content_text,
+            expected_task_type,
+        )
+        return {
+            "task_type": task_type,
+            "best_candidate_index": best_candidate_index,
+            "recommended_pan_delta": recommended_pan_delta,
+            "recommended_tilt_delta": recommended_tilt_delta,
+            "target_box_norm": normalized_box,
+            "summary": summary,
+            "score": score,
+        }
+
     def _extract_json_object(self, content_text: str) -> dict[str, Any] | None:
         cleaned = content_text.strip()
         if cleaned.startswith("```"):
@@ -864,10 +1094,10 @@ class AiProviderService:
 
     def _build_fallback_structured_result(self, content_text: str, expected_task_type: str) -> dict[str, Any]:
         return {
-            "task_type": expected_task_type,
+            "task_type": normalize_ai_task_type(expected_task_type),
             "recommended_pan_delta": 0.0,
             "recommended_tilt_delta": 0.0,
-            "target_box_norm": [round(item, 4) for item in DEFAULT_TARGET_BOX_NORM],
+            "target_box_norm": dict(DEFAULT_TARGET_BOX_NORM),
             "summary": self._build_fallback_summary(content_text, expected_task_type),
             "score": 0.0,
         }
@@ -876,7 +1106,7 @@ class AiProviderService:
         cleaned = re.sub(r"\s+", " ", content_text).strip()
         if cleaned:
             return cleaned[:160]
-        if expected_task_type == "background_lock":
+        if normalize_ai_task_type(expected_task_type) == "analyze_background":
             return "模型已返回结果，但未严格按结构化格式输出，已按默认背景建议处理。"
         return "模型已返回结果，但未严格按结构化格式输出，已按默认构图建议处理。"
 
@@ -896,23 +1126,6 @@ class AiProviderService:
         if maximum is not None:
             result = min(maximum, result)
         return result
-
-    def _safe_box_norm(self, raw: Any) -> tuple[float, float, float, float]:
-        if isinstance(raw, (list, tuple)) and len(raw) == 4:
-            try:
-                x, y, w, h = [float(item) for item in raw]
-                x = max(0.0, min(1.0, x))
-                y = max(0.0, min(1.0, y))
-                w = max(0.08, min(1.0, w))
-                h = max(0.12, min(1.0, h))
-                if x + w > 1.0:
-                    x = max(0.0, 1.0 - w)
-                if y + h > 1.0:
-                    y = max(0.0, 1.0 - h)
-                return (x, y, w, h)
-            except (TypeError, ValueError):
-                pass
-        return DEFAULT_TARGET_BOX_NORM
 
     def _parse_json_object(self, content_text: str) -> Any:
         cleaned = content_text.strip()

@@ -39,9 +39,9 @@ extension _DeviceHudPanels on _DeviceLinkPageState {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         _HudPanelHeader(
-          title: '设备',
+          title: '设置',
           subtitle:
-              '设备 ${_status?.deviceStatus ?? _health?.status ?? '未知'} · 最近刷新 ${_formatUpdatedAt()}',
+              '设备 ${_status?.deviceStatus ?? _health?.status ?? '未知'} · 手机画面为主预览',
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -65,49 +65,24 @@ extension _DeviceHudPanels on _DeviceLinkPageState {
           ],
         ),
         const SizedBox(height: 12),
-        _buildHudTextField(
-          label: '树莓派 API 地址',
-          hintText: 'http://192.168.1.100:8001',
-          controller: _baseUrlController,
-        ),
-        const SizedBox(height: 10),
-        _buildHudTextField(
-          label: '视频流地址',
-          hintText: 'mobile_push / rtsp://...',
-          controller: _streamUrlController,
-        ),
-        const SizedBox(height: 10),
-        _buildHudTextField(
-          label: '会话码',
-          hintText: 'MOBILE_20260425_011000',
-          controller: _sessionCodeController,
-        ),
-        const SizedBox(height: 12),
-        _buildHudOverlayOptions(context),
-        const SizedBox(height: 12),
         Wrap(
           spacing: 10,
           runSpacing: 10,
           children: <Widget>[
+            _HudActionChip(
+              icon: Icons.manage_search_outlined,
+              label: '详细设置',
+              onTap: () => unawaited(_openDetailedSettingsFromDeviceLink()),
+            ),
             _HudActionChip(
               icon: Icons.health_and_safety_outlined,
               label: '健康',
               onTap: _isBusy ? null : _checkHealth,
             ),
             _HudActionChip(
-              icon: Icons.fact_check_outlined,
-              label: '诊断',
-              onTap: _isBusy ? null : _runConnectionDiagnostics,
-            ),
-            _HudActionChip(
               icon: Icons.radar_outlined,
               label: '刷新',
               onTap: _isBusy ? null : _fetchStatus,
-            ),
-            _HudActionChip(
-              icon: Icons.video_settings_outlined,
-              label: '切换视频源',
-              onTap: _isBusy ? null : _restartDeviceStream,
             ),
             _HudActionChip(
               icon: Icons.camera_alt_outlined,
@@ -135,16 +110,93 @@ extension _DeviceHudPanels on _DeviceLinkPageState {
               onTap:
                   _isBusy ||
                       _isStartingMobilePush ||
-                      _isHandlingMobilePushOrientationChange
+                      _isHandlingMobilePushOrientationChange ||
+                      _isDeviceLinkRecordingVideo ||
+                      _isFinalizingDeviceLinkVideo
                   ? null
                   : () => unawaited(_switchMobilePushCamera()),
             ),
-            _HudActionChip(
-              icon: Icons.swap_horiz_outlined,
-              label: _landscapeControlsOnLeft ? '横屏左手' : '横屏右手',
-              onTap: () => _setLandscapeControlsSide(!_landscapeControlsOnLeft),
-            ),
           ],
+        ),
+        const SizedBox(height: 12),
+        _buildHudSettingsExpansion(
+          context,
+          title: '画面辅助',
+          subtitle: '人体框、骨架线、模板框和锁定位框。',
+          child: _buildHudOverlayOptions(context, showTitle: false),
+        ),
+        const SizedBox(height: 12),
+        _buildHudSettingsExpansion(
+          context,
+          title: '手势抓拍',
+          subtitle: '张手握拳、OK 手势和抓拍后 AI 分析。',
+          child: _buildHudGestureOptions(context),
+        ),
+        const SizedBox(height: 12),
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: EdgeInsets.zero,
+            initiallyExpanded: false,
+            title: Text(
+              '连接与高级',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            subtitle: Text(
+              '地址、会话码、诊断和横屏习惯收在这里。',
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.62)),
+            ),
+            children: <Widget>[
+              const SizedBox(height: 8),
+              _buildHudTextField(
+                label: '树莓派 API 地址',
+                hintText: 'http://192.168.1.100:8001',
+                controller: _baseUrlController,
+              ),
+              const SizedBox(height: 10),
+              _buildHudTextField(
+                label: '视频流地址',
+                hintText: 'mobile_push / rtsp://...',
+                controller: _streamUrlController,
+              ),
+              const SizedBox(height: 10),
+              _buildHudTextField(
+                label: '会话码',
+                hintText: 'MOBILE_20260425_011000',
+                controller: _sessionCodeController,
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: <Widget>[
+                    _HudActionChip(
+                      icon: Icons.fact_check_outlined,
+                      label: '诊断',
+                      onTap: _isBusy ? null : _runConnectionDiagnostics,
+                    ),
+                    _HudActionChip(
+                      icon: Icons.video_settings_outlined,
+                      label: '设备预览源',
+                      onTap: _isBusy ? null : _restartDeviceStream,
+                    ),
+                    _HudActionChip(
+                      icon: Icons.swap_horiz_outlined,
+                      label: _landscapeControlsOnLeft ? '横屏左手' : '横屏右手',
+                      onTap: () =>
+                          _setLandscapeControlsSide(!_landscapeControlsOnLeft),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         if (_diagnosticMessage != null) ...<Widget>[
           const SizedBox(height: 10),
@@ -205,7 +257,38 @@ extension _DeviceHudPanels on _DeviceLinkPageState {
     );
   }
 
-  Widget _buildHudOverlayOptions(BuildContext context) {
+  Widget _buildHudSettingsExpansion(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        initiallyExpanded: false,
+        title: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.62)),
+        ),
+        children: <Widget>[const SizedBox(height: 8), child],
+      ),
+    );
+  }
+
+  Widget _buildHudOverlayOptions(
+    BuildContext context, {
+    bool showTitle = true,
+  }) {
     final overlay =
         _status?.overlayStatus ?? const DeviceOverlayStatusSummary();
     final canUpdate = _status?.sessionOpened == true && !_isBusy;
@@ -228,14 +311,16 @@ extension _DeviceHudPanels on _DeviceLinkPageState {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Text(
-          '画面辅助',
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
+        if (showTitle) ...<Widget>[
+          Text(
+            '画面辅助',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
+          const SizedBox(height: 8),
+        ],
         Wrap(
           spacing: 8,
           runSpacing: 8,

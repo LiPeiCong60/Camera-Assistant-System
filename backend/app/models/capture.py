@@ -14,7 +14,7 @@ class Capture(TimestampMixin, Base):
     __tablename__ = "captures"
     __table_args__ = (
         CheckConstraint(
-            "capture_type IN ('single', 'photo', 'burst', 'best', 'background', 'device_link')",
+            "capture_type IN ('single', 'burst', 'best', 'background', 'template', 'recording')",
             name="chk_captures_type",
         ),
         CheckConstraint(

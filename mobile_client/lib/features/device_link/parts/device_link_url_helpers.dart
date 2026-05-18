@@ -30,13 +30,6 @@ extension _DeviceLinkUrlHelpers on _DeviceLinkPageState {
     ).replace(queryParameters: <String, String>{'path': rawPath}).toString();
   }
 
-  String _deviceTemplateImageUrl(DeviceTemplateSummary template) {
-    final normalizedBaseUrl = _normalizedDeviceBaseUrl(_baseUrlController.text);
-    return Uri.parse(
-      '$normalizedBaseUrl/api/device/templates/${Uri.encodeComponent(template.id)}/image',
-    ).toString();
-  }
-
   String? _templatePreviewImageUrl(TemplateSummary template) {
     final rawUrl = template.previewImageUrl?.trim();
     if (rawUrl == null || rawUrl.isEmpty) {

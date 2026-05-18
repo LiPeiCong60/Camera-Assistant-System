@@ -17,6 +17,7 @@ from device_runtime.config import (
     GimbalConfig,
     RaspberryPiProfile,
     SystemConfig,
+    TrackingConfig,
     apply_rpi_profile,
     default_config,
 )
@@ -55,6 +56,8 @@ class SessionOpenPayload:
     stream_url: str
     mirror_view: bool = False
     start_mode: str = "MANUAL"
+    mode: str = "gimbal_manual"
+    preview_source: str = "device_stream"
 
 
 @dataclass(slots=True)
@@ -149,6 +152,48 @@ def _apply_gimbal_env_overrides(config: GimbalConfig) -> None:
     config.tilt.max_step_deg = _env_float("DEVICE_TILT_MAX_STEP_DEG", config.tilt.max_step_deg)
 
 
+def _apply_tracking_env_overrides(config: TrackingConfig) -> None:
+    config.min_confidence = _env_float(
+        "DEVICE_TRACKING_MIN_CONFIDENCE",
+        config.min_confidence,
+    )
+    config.deadzone_px = _env_int("DEVICE_TRACKING_DEADZONE_PX", config.deadzone_px)
+    config.debounce_frames = _env_int(
+        "DEVICE_TRACKING_DEBOUNCE_FRAMES",
+        config.debounce_frames,
+    )
+    config.gain_x = _env_float("DEVICE_TRACKING_GAIN_X", config.gain_x)
+    config.gain_y = _env_float("DEVICE_TRACKING_GAIN_Y", config.gain_y)
+    config.max_delta_deg = _env_float(
+        "DEVICE_TRACKING_MAX_DELTA_DEG",
+        config.max_delta_deg,
+    )
+    config.min_command_interval_s = _env_float(
+        "DEVICE_TRACKING_MIN_COMMAND_INTERVAL_S",
+        config.min_command_interval_s,
+    )
+    config.command_smooth_alpha = _env_float(
+        "DEVICE_TRACKING_COMMAND_SMOOTH_ALPHA",
+        config.command_smooth_alpha,
+    )
+    config.min_output_deg = _env_float(
+        "DEVICE_TRACKING_MIN_OUTPUT_DEG",
+        config.min_output_deg,
+    )
+    config.max_anchor_jump_px = _env_float(
+        "DEVICE_TRACKING_MAX_ANCHOR_JUMP_PX",
+        config.max_anchor_jump_px,
+    )
+    config.settle_after_move_s = _env_float(
+        "DEVICE_TRACKING_SETTLE_AFTER_MOVE_S",
+        config.settle_after_move_s,
+    )
+    config.invert_pan = _env_bool("DEVICE_TRACKING_INVERT_PAN", config.invert_pan)
+    config.invert_tilt = _env_bool("DEVICE_TRACKING_INVERT_TILT", config.invert_tilt)
+    config.sensitivity = _env_float("DEVICE_TRACKING_SENSITIVITY", config.sensitivity)
+    config.compose_deadzone_px = _env_int("DEVICE_TRACKING_COMPOSE_DEADZONE_PX", config.compose_deadzone_px)
+
+
 def _resolve_rpi_profile() -> RaspberryPiProfile | None:
     mode = (_env_text("DEVICE_RPI_PROFILE") or "").lower()
     if not mode:
@@ -198,6 +243,7 @@ def _apply_runtime_env_overrides(config: SystemConfig) -> None:
         config.detection.tracking_anchor_mode,
         {"bbox_center", "upper_body", "face", "auto"},
     )
+    _apply_tracking_env_overrides(config.tracking)
     config.app.ui_refresh_fps = _env_float(
         "DEVICE_PREVIEW_FPS",
         config.app.ui_refresh_fps,
@@ -252,6 +298,7 @@ class DeviceSessionContext:
     """Realtime device session context used by local API endpoints."""
 
     GESTURE_CAPTURE_COUNTDOWN_S = 3.0
+    GESTURE_CAPTURE_COOLDOWN_S = 1.8
 
     def __init__(
         self,
@@ -265,6 +312,8 @@ class DeviceSessionContext:
         self.session_code = payload.session_code
         self.stream_url = payload.stream_url
         self.mirror_view = bool(payload.mirror_view)
+        self.mode = payload.mode
+        self.preview_source = payload.preview_source
         self.opened_at = time.time()
 
         self.config = default_config(payload.stream_url)
@@ -341,10 +390,13 @@ class DeviceSessionContext:
         self._last_gesture_event_at: float | None = None
         self._last_gesture_capture_result: dict[str, Any] | None = None
         self._last_gesture_capture_error: str | None = None
+        self._gesture_capture_in_progress = False
         self._gesture_countdown_started_at: float | None = None
         self._gesture_countdown_until: float | None = None
         self._gesture_countdown_event: str | None = None
         self._gesture_countdown_reason: str | None = None
+        self._mobile_capture_request_seq = 0
+        self._mobile_capture_request: dict[str, Any] | None = None
         self._ai_countdown_started_at: float | None = None
         self._ai_countdown_until: float | None = None
         self._ai_countdown_task: str | None = None
@@ -440,12 +492,14 @@ class DeviceSessionContext:
         return {
             "session_code": self.session_code,
             "stream_url": self.stream_url,
-            "mode": self.control_service.get_mode().value,
+            "mode": self.mode,
+            "start_mode": self.control_service.get_mode().value,
             "follow_mode": self.runtime_state.follow_mode,
             "speed_mode": self.runtime_state.speed_mode,
             "compose_score": getattr(compose_feedback, "total_score", None),
             "template_id": self.runtime_state.selected_template_id,
             "mirror_view": self.mirror_view,
+            "preview_source": self.preview_source,
         }
 
     def build_status(self) -> dict:
@@ -483,9 +537,12 @@ class DeviceSessionContext:
             "session_code": self.session_code,
             "stream_url": self.stream_url,
             "mirror_view": self.mirror_view,
-            "mode": self.control_service.get_mode().value,
+            "mode": self.mode,
+            "start_mode": self.control_service.get_mode().value,
+            "preview_source": self.preview_source,
             "follow_mode": self.runtime_state.follow_mode,
             "speed_mode": self.runtime_state.speed_mode,
+            "sensitivity": self.control_service.get_sensitivity(),
             "device_status": self.device_status,
             "loop_running": self.runtime_state.loop_running,
             "detector_backend": self.runtime_state.detector_backend,
@@ -510,6 +567,7 @@ class DeviceSessionContext:
             },
             "ai_provider_status": ai_provider_status,
             "latest_capture": latest_capture,
+            "mobile_capture_request": self._mobile_capture_request,
             "current_pan": round(float(current_pan), 3),
             "current_tilt": round(float(current_tilt), 3),
             "selected_template_id": self.runtime_state.selected_template_id,
@@ -550,6 +608,7 @@ class DeviceSessionContext:
                 "countdown": self._ai_countdown_status(),
                 "provider_status": ai_provider_status,
                 "latest_capture": latest_capture,
+                "mobile_capture_request": self._mobile_capture_request,
             },
             "overlay_status": self._overlay_settings.as_dict(),
             "gesture_status": {
@@ -561,6 +620,7 @@ class DeviceSessionContext:
                 "last_event_at": self._last_gesture_event_at,
                 "last_capture_result": self._last_gesture_capture_result,
                 "last_capture_error": self._last_gesture_capture_error,
+                "capture_in_progress": getattr(self, "_gesture_capture_in_progress", False),
                 "state": self._gesture_state.snapshot(),
                 "capture_countdown": self._gesture_countdown_status(),
             },
@@ -583,6 +643,10 @@ class DeviceSessionContext:
                     self._gesture_state.reset_pose_capture()
                 if not self._gesture_settings.force_ok_enabled:
                     self._gesture_state.reset()
+                detector_config_changed = (
+                    self._apply_gesture_detection_requirements()
+                    or detector_config_changed
+                )
             if detection is not None:
                 for key in (
                     "enable_pose_landmarks",
@@ -594,11 +658,48 @@ class DeviceSessionContext:
                         if getattr(self.config.detection, key) != value:
                             setattr(self.config.detection, key, value)
                             detector_config_changed = True
-                if detector_config_changed:
-                    self._reset_detector_pipeline()
-                    if self.runtime_state.loop_running:
-                        self._ensure_detector_pipeline()
+            gesture_settings = getattr(self, "_gesture_settings", None)
+            if (
+                gesture_settings is not None
+                and (gesture_settings.capture_enabled or gesture_settings.force_ok_enabled)
+            ):
+                detector_config_changed = (
+                    self._apply_gesture_detection_requirements()
+                    or detector_config_changed
+                )
+            if detector_config_changed:
+                self._reset_detector_pipeline()
+                if self.runtime_state.loop_running:
+                    self._ensure_detector_pipeline()
             return self.build_status()
+
+    def _apply_gesture_detection_requirements(self) -> bool:
+        if not (
+            self._gesture_settings.capture_enabled
+            or self._gesture_settings.force_ok_enabled
+        ):
+            return False
+
+        changed = False
+        updates = {
+            "enable_hand_landmarks": True,
+            "async_skip_frames": 0,
+        }
+        for key, value in updates.items():
+            if getattr(self.config.detection, key) != value:
+                setattr(self.config.detection, key, value)
+                changed = True
+
+        if self.config.detection.max_inference_side < 720:
+            self.config.detection.max_inference_side = 720
+            changed = True
+        if self.config.detection.detector_fps < 10.0:
+            self.config.detection.detector_fps = 10.0
+            changed = True
+        if self.config.detection.min_confidence > 0.35:
+            self.config.detection.min_confidence = 0.35
+            changed = True
+        return changed
 
     def _reset_detector_pipeline(self) -> None:
         if self._async_detector is not None:
@@ -669,10 +770,9 @@ class DeviceSessionContext:
 
             if processed.tracking_command is not None:
                 try:
-                    self.gimbal.move_relative(
+                    self.gimbal.move_relative_step_live(
                         processed.tracking_command.pan_delta,
                         processed.tracking_command.tilt_delta,
-                        smooth=True,
                     )
                 except Exception as exc:
                     self.runtime_state.last_runtime_error = str(exc)
@@ -748,6 +848,18 @@ class DeviceSessionContext:
         return self.control_service.get_current_angles(prefer_feedback=True)
 
     def trigger_capture(self, *, reason: str, auto_analyze: bool = False) -> CaptureResult:
+        if self._should_delegate_capture_to_mobile():
+            if self._has_pending_mobile_capture_request():
+                return CaptureResult(
+                    path=None,
+                    mobile_capture_request=self._mobile_capture_request,
+                )
+            request = self._request_mobile_capture(
+                reason=reason,
+                auto_analyze=auto_analyze,
+            )
+            return CaptureResult(path=None, mobile_capture_request=request)
+
         frame = self.runtime_state.latest_frame
         if frame is None:
             frame = self._acquire_frame_for_capture()
@@ -760,6 +872,78 @@ class DeviceSessionContext:
             auto_analyze=auto_analyze,
             context=self.build_ai_context(),
         )
+
+    def _should_delegate_capture_to_mobile(self) -> bool:
+        return (
+            self.preview_source == "phone_camera"
+            or self.stream_url.strip().lower() == "mobile_push"
+        )
+
+    def _has_pending_mobile_capture_request(self) -> bool:
+        request = self._mobile_capture_request
+        return request is not None and request.get("status") == "pending"
+
+    def _request_mobile_capture(
+        self,
+        *,
+        reason: str,
+        auto_analyze: bool = False,
+    ) -> dict[str, Any]:
+        self._mobile_capture_request_seq += 1
+        request = {
+            "id": f"{self.session_code}-{self._mobile_capture_request_seq}",
+            "sequence": self._mobile_capture_request_seq,
+            "reason": reason,
+            "auto_analyze": bool(auto_analyze),
+            "requested_at": time.time(),
+            "status": "pending",
+        }
+        self._mobile_capture_request = request
+        self.runtime_state.latest_capture_path = None
+        self.runtime_state.latest_capture_analysis = None
+        self.runtime_state.latest_capture_error = None
+        return request
+
+    def acknowledge_mobile_capture(
+        self,
+        *,
+        request_id: str,
+        success: bool = True,
+        local_path: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        request = self._mobile_capture_request
+        if request is None or request.get("id") != request_id:
+            return None
+
+        completed_request = {
+            **request,
+            "status": "completed" if success and not error else "failed",
+            "completed_at": time.time(),
+            "local_path": local_path,
+            "error": error,
+        }
+        self._mobile_capture_request = None
+        self.runtime_state.latest_capture_path = None
+        self.runtime_state.latest_capture_analysis = None
+        self.runtime_state.latest_capture_error = error
+
+        gesture_result = self._last_gesture_capture_result
+        if (
+            gesture_result is not None
+            and gesture_result.get("request_id") == request_id
+        ):
+            self._last_gesture_capture_result = {
+                **gesture_result,
+                "pending": False,
+                "capturing": False,
+                "delegated_to_mobile": True,
+                "mobile_saved": success and not error,
+                "mobile_local_path": local_path,
+                "analysis_error": error,
+            }
+            self._last_gesture_capture_error = error
+        return completed_request
 
     def get_preview_jpeg_bytes(self, *, quality: int | None = None) -> bytes:
         frame = self.get_preview_frame()
@@ -838,6 +1022,14 @@ class DeviceSessionContext:
             self._clear_gesture_countdown()
             return
 
+        if self._has_pending_mobile_capture_request():
+            self._gesture_state.reset()
+            return
+
+        if self._gesture_capture_in_progress:
+            self._gesture_state.reset()
+            return
+
         if self._gesture_countdown_until is not None:
             if now >= self._gesture_countdown_until:
                 self._complete_gesture_countdown()
@@ -880,18 +1072,31 @@ class DeviceSessionContext:
         }
 
     def _complete_gesture_countdown(self) -> None:
+        if self._gesture_capture_in_progress:
+            return
         reason = self._gesture_countdown_reason or "gesture_capture"
         event = self._gesture_countdown_event or "capture"
+        self._gesture_capture_in_progress = True
+        self._gesture_state.reset()
         try:
+            self._last_gesture_capture_result = {
+                "pending": True,
+                "capturing": True,
+                "reason": reason,
+                "event": event,
+                "countdown_s": self.GESTURE_CAPTURE_COUNTDOWN_S,
+            }
             result = self.trigger_capture(
                 reason=reason,
                 auto_analyze=self._gesture_settings.auto_analyze_enabled,
             )
             self._last_gesture_capture_result = {
                 "path": result.path,
+                "request_id": (result.mobile_capture_request or {}).get("id"),
+                "delegated_to_mobile": result.mobile_capture_request is not None,
                 "reason": reason,
                 "event": event,
-                "pending": False,
+                "pending": result.mobile_capture_request is not None,
                 "analysis": {
                     "score": getattr(result.analysis, "score", None),
                     "summary": getattr(result.analysis, "summary", None),
@@ -906,6 +1111,8 @@ class DeviceSessionContext:
             self._last_gesture_capture_error = str(exc)
             self._last_gesture_capture_result = None
         finally:
+            self._gesture_capture_in_progress = False
+            self._gesture_state.suppress_for(self.GESTURE_CAPTURE_COOLDOWN_S)
             self._clear_gesture_countdown()
 
     def _clear_gesture_countdown(self) -> None:
@@ -927,6 +1134,7 @@ class DeviceSessionContext:
             "active": remaining is not None,
             "remaining_s": remaining,
             "duration_s": self.GESTURE_CAPTURE_COUNTDOWN_S,
+            "capture_in_progress": getattr(self, "_gesture_capture_in_progress", False),
             "started_at": getattr(self, "_gesture_countdown_started_at", None),
             "capture_at": getattr(self, "_gesture_countdown_until", None),
             "event": getattr(self, "_gesture_countdown_event", None),

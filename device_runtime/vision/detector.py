@@ -111,8 +111,13 @@ class MediaPipeVisionDetector(VisionDetector):
                 try:
                     self._hands = vision.HandLandmarker.create_from_options(hand_options)
                 except Exception as exc:
-                    self._hands = None
-                    self._logger.warning("HandLandmarker init failed, hand gesture features disabled: %s", exc)
+                    self._logger.warning(
+                        "HandLandmarker init failed, fallback to MediaPipe solutions API: %s",
+                        exc,
+                    )
+                    self._use_solutions_fallback = True
+                    self._setup_solutions_fallback()
+                    return
             self._face = None
             if self._config.enable_face_landmarks:
                 face_model = self._ensure_model(

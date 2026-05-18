@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../models/ai_task_summary.dart';
 import '../models/auth_session.dart';
 import '../models/batch_pick_result.dart';
@@ -36,11 +38,7 @@ class MobileApiService {
   }) async {
     final data = await _client.postJson(
       '/mobile/auth/register',
-      body: {
-        'phone': phone,
-        'password': password,
-        'display_name': displayName,
-      },
+      body: {'phone': phone, 'password': password, 'display_name': displayName},
     );
     return AuthSession.fromJson(data);
   }
@@ -87,7 +85,7 @@ class MobileApiService {
       body: <String, dynamic>{
         'device_id': deviceId,
         'template_id': templateId,
-        'mode': mode,
+        'mode': _canonicalCaptureSessionMode(mode),
         'metadata': metadata,
       },
     );
@@ -109,6 +107,12 @@ class MobileApiService {
     num? score,
     Map<String, dynamic> metadata = const <String, dynamic>{},
   }) async {
+    final captureMetadata = <String, dynamic>{
+      'media_type': 'photo',
+      'local_album_saved': false,
+      'duration_ms': null,
+      ...metadata,
+    };
     final data = await _client.postJson(
       '/mobile/captures/upload',
       accessToken: accessToken,
@@ -122,7 +126,7 @@ class MobileApiService {
         'storage_provider': storageProvider,
         'is_ai_selected': isAiSelected,
         'score': score,
-        'metadata': metadata,
+        'metadata': captureMetadata,
       },
     );
     final capture = CaptureRecord.fromJson(data);
@@ -169,6 +173,29 @@ class MobileApiService {
         'session_id': sessionId,
         'capture_id': captureId,
         'device_id': deviceId,
+      },
+    );
+    return AiTaskSummary.fromJson(data);
+  }
+
+  Future<AiTaskSummary> analyzeScan({
+    required String accessToken,
+    required String taskType,
+    required List<String> filePaths,
+    required List<Map<String, dynamic>> candidates,
+    Map<String, dynamic> metadata = const <String, dynamic>{},
+    int? deviceId,
+  }) async {
+    final data = await _client.postMultipartFiles(
+      '/mobile/ai/analyze-scan',
+      accessToken: accessToken,
+      fileField: 'files',
+      filePaths: filePaths,
+      fields: <String, String>{
+        'task_type': taskType,
+        'candidates_json': jsonEncode(candidates),
+        'metadata_json': jsonEncode(metadata),
+        if (deviceId != null) 'device_id': deviceId.toString(),
       },
     );
     return AiTaskSummary.fromJson(data);
@@ -304,5 +331,25 @@ class MobileApiService {
 
   Future<void> clearLocalContentCache() {
     return _cacheService.clearContentCache();
+  }
+
+  static String _canonicalCaptureSessionMode(String mode) {
+    switch (mode) {
+      case 'device_link':
+      case 'MANUAL':
+        return 'gimbal_manual';
+      case 'AUTO_TRACK':
+        return 'gimbal_follow';
+      case 'SMART_COMPOSE':
+        return 'gimbal_template';
+      case 'mobile_only':
+      case 'gimbal_manual':
+      case 'gimbal_follow':
+      case 'gimbal_template':
+      case 'ai_auto_angle':
+      case 'ai_background':
+        return mode;
+    }
+    return 'mobile_only';
   }
 }

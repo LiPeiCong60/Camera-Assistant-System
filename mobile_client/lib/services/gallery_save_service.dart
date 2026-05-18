@@ -30,6 +30,31 @@ class GallerySaveService {
     });
   }
 
+  Future<String?> saveImageFile({
+    required String path,
+    required String fileName,
+  }) async {
+    return _channel.invokeMethod<String>('saveImageFile', <String, Object>{
+      'path': path,
+      'fileName': fileName,
+    });
+  }
+
+  Future<String?> saveVideoFile({
+    required String path,
+    required String fileName,
+  }) async {
+    return _channel.invokeMethod<String>('saveVideo', <String, Object>{
+      'path': path,
+      'fileName': fileName,
+    });
+  }
+
+  Future<bool> openGallery() async {
+    final opened = await _channel.invokeMethod<bool>('openGallery');
+    return opened ?? false;
+  }
+
   Future<Uint8List> _readBytes(ResolvedImageSource source) async {
     if (source.type == ResolvedImageSourceType.file) {
       return source.file!.readAsBytes();

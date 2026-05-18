@@ -6,6 +6,9 @@ Thumbs.db
 
 # Git / local metadata
 .git/
+.claude/
+.deepseek/
+refactor_workspace/
 
 # Python
 .venv/

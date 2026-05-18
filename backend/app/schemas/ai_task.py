@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
+from backend.app.core.contract import (
+    normalize_ai_response_payload,
+    normalize_ai_task_type,
+    normalize_target_box_norm,
+)
 from backend.app.schemas.base import SchemaModel
 
 
@@ -26,11 +32,32 @@ class AiTaskRead(SchemaModel):
     result_score: Decimal | None = None
     recommended_pan_delta: Decimal | None = None
     recommended_tilt_delta: Decimal | None = None
-    target_box_norm: list[float] | dict | None = None
+    target_box_norm: dict[str, Any] | None = None
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
     finished_at: datetime | None = None
+
+    @field_validator("task_type", mode="before")
+    @classmethod
+    def normalize_task_type_value(cls, value):
+        return normalize_ai_task_type(value)
+
+    @field_validator("target_box_norm", mode="before")
+    @classmethod
+    def normalize_target_box_value(cls, value):
+        return normalize_target_box_norm(value)
+
+    @field_validator("response_payload", mode="before")
+    @classmethod
+    def normalize_response_payload_value(cls, value):
+        return normalize_ai_response_payload(value)
+
+    @model_validator(mode="after")
+    def populate_target_box_from_payload(self):
+        if self.target_box_norm is None and isinstance(self.response_payload, dict):
+            self.target_box_norm = normalize_target_box_norm(self.response_payload.get("target_box_norm"))
+        return self
 
 
 class AnalyzePhotoRequest(SchemaModel):

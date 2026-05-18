@@ -81,14 +81,16 @@ AI 调用由 `app/services/ai_provider_service.py` 负责，当前支持 `openai
 
 ## 历史和设备抓拍
 
-后端 `captures.capture_type` 当前允许：
+后端 `captures.capture_type` 当前按 canonical 枚举入库：
 
 - `single`
-- `photo`
 - `burst`
 - `best`
 - `background`
-- `device_link`
+- `template`
+- `recording`
+
+兼容旧客户端上报的 `photo` 和 `device_link`，入库前会映射为 `single`，并在 `metadata.media_type` / `metadata.source` 中保留语义。
 
 但当前产品流程中，设备联动手势抓拍默认只保存在 `device_runtime/captures`，不会自动写入后端历史。后端历史主要服务于手机端独立拍摄、背景分析、连拍选优和管理后台回看。
 

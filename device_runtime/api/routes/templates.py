@@ -26,14 +26,44 @@ class ImportTemplateRequest(BaseModel):
     name: str | None = None
 
 
+def _serialize_pose_points(points) -> dict[str, list[float]]:
+    return {
+        str(key): [float(value[0]), float(value[1])]
+        for key, value in (points or {}).items()
+    }
+
+
+def _optional_float(value) -> float | None:
+    return None if value is None else float(value)
+
+
 def _serialize_profile(profile) -> dict[str, Any]:
+    bbox_norm = [float(value) for value in profile.bbox_norm]
     return {
         "template_id": profile.template_id,
         "name": profile.name,
         "image_path": profile.image_path,
         "created_at": profile.created_at,
-        "bbox_norm": list(profile.bbox_norm),
+        "bbox_norm": bbox_norm,
         "pose_point_count": len(profile.pose_points_image or {}),
+        "template_data": {
+            "name": profile.name,
+            "image_path": profile.image_path,
+            "bbox_norm": bbox_norm,
+            "anchor_norm_x": float(profile.anchor_norm_x),
+            "anchor_norm_y": float(profile.anchor_norm_y),
+            "shoulder_anchor_norm_x": float(profile.shoulder_anchor_norm_x),
+            "shoulder_anchor_norm_y": float(profile.shoulder_anchor_norm_y),
+            "head_anchor_norm_x": _optional_float(profile.head_anchor_norm_x),
+            "head_anchor_norm_y": _optional_float(profile.head_anchor_norm_y),
+            "face_anchor_norm_x": _optional_float(profile.face_anchor_norm_x),
+            "face_anchor_norm_y": _optional_float(profile.face_anchor_norm_y),
+            "area_ratio": float(profile.area_ratio),
+            "facing_sign": float(profile.facing_sign),
+            "pose_points": _serialize_pose_points(profile.pose_points),
+            "pose_points_image": _serialize_pose_points(profile.pose_points_image),
+            "pose_points_bbox": _serialize_pose_points(profile.pose_points_bbox),
+        },
     }
 
 

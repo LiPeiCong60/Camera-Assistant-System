@@ -30,6 +30,83 @@ const prettyResponsePayload = computed(() =>
   selectedTask.value?.response_payload ? JSON.stringify(selectedTask.value.response_payload, null, 2) : "{}",
 );
 
+const prettyTargetBoxNorm = computed(() => prettyJsonValue(resolveSelectedTaskField("target_box_norm")));
+const recommendedPanDelta = computed(() => formatFieldValue(resolveSelectedTaskField("recommended_pan_delta")));
+const recommendedTiltDelta = computed(() => formatFieldValue(resolveSelectedTaskField("recommended_tilt_delta")));
+const selectedErrorMessage = computed(() => formatFieldValue(resolveSelectedTaskField("error_message")));
+
+function hasValue(value) {
+  return value !== null && value !== undefined && value !== "";
+}
+
+function normalizePayload(payload) {
+  if (!payload) {
+    return {};
+  }
+
+  if (typeof payload === "object") {
+    return payload;
+  }
+
+  if (typeof payload !== "string") {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(payload);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function resolveSelectedTaskField(key) {
+  const task = selectedTask.value;
+  if (!task) {
+    return null;
+  }
+
+  if (hasValue(task[key])) {
+    return task[key];
+  }
+
+  const responsePayload = normalizePayload(task.response_payload);
+  const nestedPayloads = [responsePayload, responsePayload.data, responsePayload.result].filter(Boolean);
+  for (const payload of nestedPayloads) {
+    if (hasValue(payload?.[key])) {
+      return payload[key];
+    }
+  }
+
+  return null;
+}
+
+function formatFieldValue(value) {
+  if (!hasValue(value)) {
+    return "-";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function prettyJsonValue(value) {
+  if (!hasValue(value)) {
+    return "-";
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+
+  return JSON.stringify(value, null, 2);
+}
+
 function formatDate(value) {
   if (!value) {
     return "-";
@@ -209,11 +286,25 @@ onMounted(() => {
           <span class="detail-label">结果评分</span>
           <strong>{{ selectedTask.result_score ?? "-" }}</strong>
         </section>
+        <section class="detail-card">
+          <span class="detail-label">推荐 Pan 调整</span>
+          <strong>{{ recommendedPanDelta }}</strong>
+        </section>
+        <section class="detail-card">
+          <span class="detail-label">推荐 Tilt 调整</span>
+          <strong>{{ recommendedTiltDelta }}</strong>
+        </section>
       </div>
 
       <el-form label-position="top">
         <el-form-item label="结果摘要">
           <el-input :model-value="selectedTask?.result_summary || '-'" type="textarea" :rows="3" readonly />
+        </el-form-item>
+        <el-form-item label="target_box_norm">
+          <el-input :model-value="prettyTargetBoxNorm" type="textarea" :rows="6" readonly />
+        </el-form-item>
+        <el-form-item label="错误信息">
+          <el-input :model-value="selectedErrorMessage" type="textarea" :rows="3" readonly />
         </el-form-item>
         <el-form-item label="请求载荷">
           <el-input :model-value="prettyRequestPayload" type="textarea" :rows="8" readonly />

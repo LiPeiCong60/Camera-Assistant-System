@@ -8,6 +8,17 @@ extension _DeviceLinkMobilePushCameraActions on _DeviceLinkPageState {
     if (_mobilePushCameras.isEmpty) {
       throw const ApiException('没有找到可用摄像头，请检查系统权限。');
     }
+    if (!_isMobilePushEnabled) {
+      final prefs = await SharedPreferences.getInstance();
+      final preferredLens = prefs.getString(
+        _DeviceLinkPageState._detailedSettingKey('push.camera_lens'),
+      );
+      if (preferredLens == 'front') {
+        _mobilePushLensDirection = CameraLensDirection.front;
+      } else if (preferredLens == 'back') {
+        _mobilePushLensDirection = CameraLensDirection.back;
+      }
+    }
     return _findMobilePushCamera(_mobilePushLensDirection) ??
         _findMobilePushCamera(CameraLensDirection.back) ??
         _mobilePushCameras.first;

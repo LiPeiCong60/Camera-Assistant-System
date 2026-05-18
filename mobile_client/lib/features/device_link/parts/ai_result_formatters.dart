@@ -58,6 +58,31 @@ extension _DeviceLinkAiResultFormatters on _DeviceLinkPageState {
     return lines.isEmpty ? '抓拍 AI 分析已完成。' : lines.join('\n');
   }
 
+  String _formatDeviceLinkPhotoAiTask(
+    AiTaskSummary task, {
+    String? capturePath,
+  }) {
+    final response = task.responsePayload;
+    final lines = <String>[];
+    _addResultLine(lines, '任务状态', task.status);
+    _addResultLine(
+      lines,
+      'AI 判断',
+      task.resultSummary ?? _resultValue(response, 'summary'),
+    );
+    _addResultLine(lines, '抓拍照片', capturePath);
+    _addResultLine(
+      lines,
+      '评分',
+      _formatScore(task.resultScore ?? _resultValue(response, 'score')),
+    );
+    _addSuggestions(lines, _resultValue(response, 'suggestions'));
+    if (task.status != 'succeeded') {
+      _addResultLine(lines, '错误', task.errorMessage);
+    }
+    return lines.isEmpty ? '拍后 AI 分析已完成。' : lines.join('\n');
+  }
+
   dynamic _resultValue(Map<String, dynamic> result, String key) {
     return result[key] ??
         result[_toSnakeCase(key)] ??

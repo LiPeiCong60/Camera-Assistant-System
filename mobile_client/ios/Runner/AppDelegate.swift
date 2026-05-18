@@ -22,6 +22,12 @@ import UIKit
     channel.setMethodCallHandler { call, result in
       if call.method == "saveImage" {
         saver.saveImage(arguments: call.arguments, result: result)
+      } else if call.method == "saveImageFile" {
+        saver.saveImageFile(arguments: call.arguments, result: result)
+      } else if call.method == "saveVideo" {
+        saver.saveVideo(arguments: call.arguments, result: result)
+      } else if call.method == "openGallery" {
+        saver.openGallery(result: result)
       } else {
         result(FlutterMethodNotImplemented)
       }
@@ -61,7 +67,65 @@ final class GallerySaver: NSObject {
         return
       }
 
-      self.writePhoto(tempUrl: tempUrl, result: result)
+      self.writePhoto(tempUrl: tempUrl, removeAfterSave: true, result: result)
+    }
+  }
+
+  func saveImageFile(arguments: Any?, result: @escaping FlutterResult) {
+    guard
+      let args = arguments as? [String: Any],
+      let path = args["path"] as? String,
+      !path.isEmpty
+    else {
+      result(FlutterError(code: "invalid_file", message: "Image file does not exist.", details: nil))
+      return
+    }
+
+    let tempUrl = URL(fileURLWithPath: path)
+    requestPhotoAddAuthorization { authorized in
+      guard authorized else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "permission_denied", message: "No permission to add photos.", details: nil))
+        }
+        return
+      }
+
+      self.writePhoto(tempUrl: tempUrl, removeAfterSave: false, result: result)
+    }
+  }
+
+  func saveVideo(arguments: Any?, result: @escaping FlutterResult) {
+    guard
+      let args = arguments as? [String: Any],
+      let path = args["path"] as? String,
+      !path.isEmpty
+    else {
+      result(FlutterError(code: "invalid_file", message: "Video file does not exist.", details: nil))
+      return
+    }
+
+    let tempUrl = URL(fileURLWithPath: path)
+    requestPhotoAddAuthorization { authorized in
+      guard authorized else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "permission_denied", message: "No permission to add photos.", details: nil))
+        }
+        return
+      }
+
+      self.writeVideo(tempUrl: tempUrl, result: result)
+    }
+  }
+
+  func openGallery(result: @escaping FlutterResult) {
+    guard let url = URL(string: "photos-redirect://") else {
+      result(false)
+      return
+    }
+    DispatchQueue.main.async {
+      UIApplication.shared.open(url, options: [:]) { opened in
+        result(opened)
+      }
     }
   }
 
@@ -77,16 +141,32 @@ final class GallerySaver: NSObject {
     }
   }
 
-  private func writePhoto(tempUrl: URL, result: @escaping FlutterResult) {
+  private func writePhoto(tempUrl: URL, removeAfterSave: Bool, result: @escaping FlutterResult) {
     PHPhotoLibrary.shared().performChanges({
       PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: tempUrl)
     }, completionHandler: { success, error in
       DispatchQueue.main.async {
-        try? FileManager.default.removeItem(at: tempUrl)
+        if removeAfterSave {
+          try? FileManager.default.removeItem(at: tempUrl)
+        }
         if success {
           result(tempUrl.lastPathComponent)
         } else {
           result(FlutterError(code: "save_failed", message: error?.localizedDescription ?? "Save image failed.", details: nil))
+        }
+      }
+    })
+  }
+
+  private func writeVideo(tempUrl: URL, result: @escaping FlutterResult) {
+    PHPhotoLibrary.shared().performChanges({
+      PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: tempUrl)
+    }, completionHandler: { success, error in
+      DispatchQueue.main.async {
+        if success {
+          result(tempUrl.lastPathComponent)
+        } else {
+          result(FlutterError(code: "save_failed", message: error?.localizedDescription ?? "Save video failed.", details: nil))
         }
       }
     })

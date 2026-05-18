@@ -14,6 +14,7 @@ const navGroups = [
     title: "基础管理",
     items: [
       { label: "用户管理", routeName: "users" },
+      { label: "设备管理", routeName: "devices" },
       { label: "套餐管理", routeName: "plans" },
       { label: "推荐模板", routeName: "templates" },
     ],

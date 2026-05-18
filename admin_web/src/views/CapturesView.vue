@@ -20,6 +20,93 @@ const summary = computed(() => {
   };
 });
 
+function hasValue(value) {
+  return value !== null && value !== undefined && value !== "";
+}
+
+function normalizeMetadata(metadata) {
+  if (!metadata) {
+    return {};
+  }
+
+  if (typeof metadata === "object") {
+    return metadata;
+  }
+
+  if (typeof metadata !== "string") {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(metadata);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readCaptureValue(row, key, metadataKeys = [key]) {
+  if (hasValue(row?.[key])) {
+    return row[key];
+  }
+
+  const metadata = normalizeMetadata(row?.metadata);
+  const keys = Array.from(new Set(metadataKeys));
+  for (const metadataKey of keys) {
+    if (hasValue(metadata[metadataKey])) {
+      return metadata[metadataKey];
+    }
+  }
+
+  return null;
+}
+
+function getMediaType(row) {
+  return readCaptureValue(row, "media_type");
+}
+
+function getDurationMs(row) {
+  return readCaptureValue(row, "duration_ms");
+}
+
+function getLocalAlbumSaved(row) {
+  return readCaptureValue(row, "local_album_saved", ["local_album_saved", "album_saved"]);
+}
+
+function getMediaTagType(row) {
+  const mediaType = getMediaType(row);
+  if (mediaType === "video") {
+    return "warning";
+  }
+  if (mediaType === "photo") {
+    return "success";
+  }
+  return "info";
+}
+
+function normalizeBoolean(value) {
+  if (!hasValue(value)) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n"].includes(normalized)) {
+      return false;
+    }
+    return null;
+  }
+  return Boolean(value);
+}
+
 function formatDate(value) {
   if (!value) {
     return "-";
@@ -32,6 +119,41 @@ function formatResolution(row) {
     return "-";
   }
   return `${row.width} × ${row.height}`;
+}
+
+function formatDuration(row) {
+  const durationMs = getDurationMs(row);
+  if (!hasValue(durationMs)) {
+    return "-";
+  }
+
+  const numericDuration = Number(durationMs);
+  if (!Number.isFinite(numericDuration)) {
+    return String(durationMs);
+  }
+
+  if (numericDuration < 1000) {
+    return `${Math.round(numericDuration)} ms`;
+  }
+
+  const seconds = numericDuration / 1000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
+}
+
+function formatLocalAlbumSaved(row) {
+  const saved = normalizeBoolean(getLocalAlbumSaved(row));
+  if (saved === null) {
+    return "-";
+  }
+  return saved ? "是" : "否";
+}
+
+function getLocalAlbumTagType(row) {
+  const saved = normalizeBoolean(getLocalAlbumSaved(row));
+  if (saved === null) {
+    return "info";
+  }
+  return saved ? "success" : "info";
 }
 
 async function loadCaptures() {
@@ -140,7 +262,15 @@ onMounted(() => {
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="session_id" label="会话ID" width="100" />
         <el-table-column prop="user_id" label="用户ID" width="100" />
-        <el-table-column prop="capture_type" label="类型" width="120">
+        <el-table-column label="媒体" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="getMediaType(row)" :type="getMediaTagType(row)">
+              {{ getMediaType(row) }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="capture_type" label="拍摄类型" width="120">
           <template #default="{ row }">
             <el-tag :type="row.capture_type === 'background' ? 'warning' : 'success'">
               {{ row.capture_type }}
@@ -157,7 +287,19 @@ onMounted(() => {
             {{ formatResolution(row) }}
           </template>
         </el-table-column>
+        <el-table-column label="时长" width="110">
+          <template #default="{ row }">
+            {{ formatDuration(row) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="storage_provider" label="存储" width="110" />
+        <el-table-column label="本地相册" width="110">
+          <template #default="{ row }">
+            <el-tag :type="getLocalAlbumTagType(row)">
+              {{ formatLocalAlbumSaved(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="score" label="评分" width="90" />
         <el-table-column label="AI选中" width="100">
           <template #default="{ row }">

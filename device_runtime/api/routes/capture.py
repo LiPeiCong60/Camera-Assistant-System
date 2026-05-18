@@ -21,6 +21,13 @@ class TriggerCaptureRequest(BaseModel):
     auto_analyze: bool = False
 
 
+class MobileCaptureAckRequest(BaseModel):
+    request_id: str
+    success: bool = True
+    local_path: str | None = None
+    error: str | None = None
+
+
 def _serialize_analysis(analysis) -> dict | None:
     if analysis is None:
         return None
@@ -81,7 +88,24 @@ def trigger_capture(payload: TriggerCaptureRequest) -> dict:
             "capture_path": result.path,
             "analysis": _serialize_analysis(result.analysis),
             "analysis_error": result.analysis_error,
+            "mobile_capture_request": result.mobile_capture_request,
         },
+    }
+
+
+@router.post("/mobile-ack")
+def acknowledge_mobile_capture(payload: MobileCaptureAckRequest) -> dict:
+    session = require_session()
+    session.acknowledge_mobile_capture(
+        request_id=payload.request_id,
+        success=payload.success,
+        local_path=payload.local_path,
+        error=payload.error,
+    )
+    return {
+        "success": True,
+        "message": "mobile capture acknowledged",
+        "data": session.build_status(),
     }
 
 

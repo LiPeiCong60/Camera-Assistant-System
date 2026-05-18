@@ -4,12 +4,25 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.app.core.contract import (
+    extract_capture_media_fields,
+    is_ai_task_type,
+    is_capture_session_mode,
+    is_capture_type,
+    normalize_ai_response_payload,
+    normalize_ai_task_type,
+    normalize_capture_metadata,
+    normalize_capture_session_mode,
+    normalize_capture_type,
+    normalize_target_box_norm,
+)
 from backend.app.models.ai_provider_config import AiProviderConfig
 from backend.app.models.ai_task import AiTask
 from backend.app.models.base import Base
@@ -46,12 +59,12 @@ def _build_code(prefix: str) -> str:
     return f"{prefix}_{_utcnow().strftime('%Y%m%d_%H%M%S_%f')}"
 
 
-def _mock_background_lock_result() -> dict[str, object]:
+def _mock_analyze_background_result() -> dict[str, object]:
     return {
-        "task_type": "background_lock",
+        "task_type": "analyze_background",
         "recommended_pan_delta": 2.0,
         "recommended_tilt_delta": -1.0,
-        "target_box_norm": [0.31, 0.14, 0.36, 0.70],
+        "target_box_norm": {"x": 0.31, "y": 0.14, "w": 0.36, "h": 0.70, "label": "recommended_person_position"},
         "summary": "背景更干净的机位已经计算完成，可以切到建议位置。",
         "score": 91,
     }
@@ -126,13 +139,17 @@ class MobileService:
         ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="template not found")
 
+        mode = normalize_capture_session_mode(payload.mode)
+        if not is_capture_session_mode(mode):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid capture session mode")
+
         capture_session = CaptureSession(
             id=_next_id(self.session, CaptureSession),
             session_code=_build_code("SES"),
             user_id=user.id,
             device_id=payload.device_id,
             template_id=payload.template_id,
-            mode=payload.mode,
+            mode=mode,
             status="opened",
             started_at=_utcnow(),
             session_metadata=payload.metadata,
@@ -150,11 +167,22 @@ class MobileService:
         if session_entity is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="capture session not found")
 
+        capture_type = normalize_capture_type(payload.capture_type)
+        if not is_capture_type(capture_type):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid capture type")
+        capture_metadata = normalize_capture_metadata(
+            payload.metadata,
+            capture_type=payload.capture_type,
+            media_type=payload.media_type,
+            duration_ms=payload.duration_ms,
+            local_album_saved=payload.local_album_saved,
+        )
+
         capture = Capture(
             id=_next_id(self.session, Capture),
             session_id=payload.session_id,
             user_id=user.id,
-            capture_type=payload.capture_type,
+            capture_type=capture_type,
             file_url=payload.file_url,
             thumbnail_url=payload.thumbnail_url,
             width=payload.width,
@@ -162,7 +190,7 @@ class MobileService:
             storage_provider=payload.storage_provider,
             is_ai_selected=payload.is_ai_selected,
             score=payload.score,
-            capture_metadata=payload.metadata,
+            capture_metadata=capture_metadata,
         )
         self.capture_repo.add(capture)
         self.session.commit()
@@ -186,26 +214,32 @@ class MobileService:
             if task.capture_id is not None and task.capture_id not in latest_tasks:
                 latest_tasks[task.capture_id] = task
 
-        return [
-            {
-                "id": capture.id,
-                "session_id": capture.session_id,
-                "user_id": capture.user_id,
-                "capture_type": capture.capture_type,
-                "file_url": capture.file_url,
-                "thumbnail_url": capture.thumbnail_url,
-                "width": capture.width,
-                "height": capture.height,
-                "storage_provider": capture.storage_provider,
-                "is_ai_selected": capture.is_ai_selected,
-                "score": capture.score,
-                "metadata": capture.capture_metadata,
-                "latest_ai_task": latest_tasks.get(capture.id),
-                "created_at": capture.created_at,
-                "updated_at": capture.updated_at,
-            }
-            for capture in captures
-        ]
+        history_items = []
+        for capture in captures:
+            media_fields = extract_capture_media_fields(capture.capture_metadata, capture_type=capture.capture_type)
+            history_items.append(
+                {
+                    "id": capture.id,
+                    "session_id": capture.session_id,
+                    "user_id": capture.user_id,
+                    "capture_type": capture.capture_type,
+                    "media_type": media_fields["media_type"],
+                    "file_url": capture.file_url,
+                    "thumbnail_url": capture.thumbnail_url,
+                    "width": capture.width,
+                    "height": capture.height,
+                    "duration_ms": media_fields["duration_ms"],
+                    "storage_provider": capture.storage_provider,
+                    "local_album_saved": media_fields["local_album_saved"],
+                    "is_ai_selected": capture.is_ai_selected,
+                    "score": capture.score,
+                    "metadata": capture.capture_metadata,
+                    "latest_ai_task": latest_tasks.get(capture.id),
+                    "created_at": capture.created_at,
+                    "updated_at": capture.updated_at,
+                }
+            )
+        return history_items
 
     def create_analyze_photo_task(self, user: User, payload: AnalyzePhotoRequest) -> AiTask:
         capture = self._validate_session_capture(user, payload.session_id, payload.capture_id)
@@ -316,6 +350,170 @@ class MobileService:
             task_type="analyze_background",
             provider_name=provider_name,
             request_payload=payload.model_dump(),
+            response_payload=response_payload,
+        )
+
+    def create_ephemeral_image_analysis_task(
+        self,
+        user: User,
+        *,
+        image_path: Path,
+        task_type: str,
+        request_payload: dict[str, Any],
+        device_id: int | None = None,
+    ) -> AiTask:
+        normalized_task_type = normalize_ai_task_type(task_type)
+        if normalized_task_type not in {"analyze_photo", "analyze_background"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid ephemeral AI task type")
+        if device_id is not None and self.device_repo.get_for_user(user.id, device_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
+
+        config, provider_name, provider_metadata = self._resolve_ai_provider(user)
+        request_payload = {
+            **request_payload,
+            "task_type": normalized_task_type,
+            "source": "ephemeral_mobile_frame",
+        }
+
+        if config is None:
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name="unconfigured_ai",
+                request_payload=request_payload,
+                provider_metadata={**provider_metadata, "mode": "provider_not_configured"},
+                error_message="AI provider is not configured. Please configure an enabled provider in admin settings.",
+                device_id=device_id,
+            )
+
+        if provider_metadata["mode"] != "real_provider_ready":
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name=config.provider_code,
+                request_payload=request_payload,
+                provider_metadata=provider_metadata,
+                error_message=self._build_provider_not_ready_message(config, provider_metadata),
+                device_id=device_id,
+            )
+
+        try:
+            provider_service = AiProviderService(config)
+            if normalized_task_type == "analyze_background":
+                response_payload = provider_service.analyze_background_file(image_path, provider_metadata)
+            else:
+                response_payload = provider_service.analyze_photo_file(image_path, provider_metadata)
+        except AiProviderInvocationError as exc:
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name=provider_name,
+                request_payload=request_payload,
+                provider_metadata={**provider_metadata, "mode": "real_provider_failed"},
+                error_message=str(exc),
+                device_id=device_id,
+            )
+
+        return self._create_success_ai_task(
+            user=user,
+            session_id=None,
+            capture_id=None,
+            device_id=device_id,
+            task_type=normalized_task_type,
+            provider_name=provider_name,
+            request_payload=request_payload,
+            response_payload=response_payload,
+        )
+
+    def create_ephemeral_scan_analysis_task(
+        self,
+        user: User,
+        *,
+        image_paths: list[Path],
+        candidates: list[dict[str, Any]],
+        task_type: str,
+        request_payload: dict[str, Any],
+        device_id: int | None = None,
+    ) -> AiTask:
+        normalized_task_type = normalize_ai_task_type(task_type)
+        if normalized_task_type not in {"auto_angle", "analyze_background"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid scan AI task type")
+        if not image_paths:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scan analysis requires images")
+        if len(image_paths) != len(candidates):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="candidate count does not match image count")
+        if device_id is not None and self.device_repo.get_for_user(user.id, device_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
+
+        config, provider_name, provider_metadata = self._resolve_ai_provider(user)
+        request_payload = {
+            **request_payload,
+            "task_type": normalized_task_type,
+            "source": "ephemeral_mobile_scan",
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+        }
+
+        if config is None:
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name="unconfigured_ai",
+                request_payload=request_payload,
+                provider_metadata={**provider_metadata, "mode": "provider_not_configured"},
+                error_message="AI provider is not configured. Please configure an enabled provider in admin settings.",
+                device_id=device_id,
+            )
+
+        if provider_metadata["mode"] != "real_provider_ready":
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name=config.provider_code,
+                request_payload=request_payload,
+                provider_metadata=provider_metadata,
+                error_message=self._build_provider_not_ready_message(config, provider_metadata),
+                device_id=device_id,
+            )
+
+        try:
+            response_payload = AiProviderService(config).analyze_scan_files(
+                image_paths,
+                candidates,
+                provider_metadata,
+                expected_task_type=normalized_task_type,
+            )
+        except AiProviderInvocationError as exc:
+            return self._create_failed_ai_task(
+                user=user,
+                session_id=None,
+                capture_id=None,
+                task_type=normalized_task_type,
+                provider_name=provider_name,
+                request_payload=request_payload,
+                provider_metadata={**provider_metadata, "mode": "real_provider_failed"},
+                error_message=str(exc),
+                device_id=device_id,
+            )
+
+        return self._create_success_ai_task(
+            user=user,
+            session_id=None,
+            capture_id=None,
+            device_id=device_id,
+            task_type=normalized_task_type,
+            provider_name=provider_name,
+            request_payload=request_payload,
             response_payload=response_payload,
         )
 
@@ -505,7 +703,7 @@ class MobileService:
         self,
         *,
         user: User,
-        session_id: int,
+        session_id: int | None,
         capture_id: int | None,
         device_id: int | None,
         task_type: str,
@@ -513,6 +711,11 @@ class MobileService:
         request_payload: dict[str, Any],
         response_payload: dict[str, Any],
     ) -> AiTask:
+        task_type = normalize_ai_task_type(task_type)
+        if not is_ai_task_type(task_type):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid ai task type")
+        response_payload = normalize_ai_response_payload(response_payload) or {}
+        target_box_norm = normalize_target_box_norm(response_payload.get("target_box_norm"))
         task = AiTask(
             id=_next_id(self.session, AiTask),
             task_code=_build_code("AI"),
@@ -529,7 +732,7 @@ class MobileService:
             result_score=self._to_decimal(response_payload.get("score")),
             recommended_pan_delta=self._to_decimal(response_payload.get("recommended_pan_delta")),
             recommended_tilt_delta=self._to_decimal(response_payload.get("recommended_tilt_delta")),
-            target_box_norm=response_payload.get("target_box_norm"),
+            target_box_norm=target_box_norm,
             finished_at=_utcnow(),
         )
         self.ai_task_repo.add(task)
@@ -541,7 +744,7 @@ class MobileService:
         self,
         *,
         user: User,
-        session_id: int,
+        session_id: int | None,
         capture_id: int | None,
         task_type: str,
         provider_name: str,
@@ -550,6 +753,9 @@ class MobileService:
         error_message: str,
         device_id: int | None = None,
     ) -> AiTask:
+        task_type = normalize_ai_task_type(task_type)
+        if not is_ai_task_type(task_type):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid ai task type")
         task = AiTask(
             id=_next_id(self.session, AiTask),
             task_code=_build_code("AI"),

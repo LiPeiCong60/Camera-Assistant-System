@@ -8,7 +8,7 @@ import numpy as np
 
 from device_runtime.api.app import app
 from device_runtime.api.routes.status import DeviceRuntimeConfigRequest
-from device_runtime.api.session_manager import DeviceSessionContext
+from device_runtime.api.session_manager import DeviceSessionContext, GestureSettings
 from device_runtime.config import RaspberryPiProfile, apply_rpi_profile, default_config
 from device_runtime.services.runtime_state import RuntimeState
 from device_runtime.templates.template_compose import GestureCaptureState, TemplateProfile
@@ -169,6 +169,42 @@ class OverlayGestureTest(unittest.TestCase):
         self.assertTrue(payload.overlay.show_tracking_anchor)
         self.assertTrue(payload.gesture.capture_enabled)
         self.assertIn("/api/device/config", {route.path for route in app.routes})
+        self.assertIn("/api/device/capture/mobile-ack", {route.path for route in app.routes})
+
+    def test_phone_camera_capture_delegates_to_mobile_without_local_save(self) -> None:
+        session = object.__new__(DeviceSessionContext)
+        session.session_code = "SES_TEST"
+        session.stream_url = "mobile_push"
+        session.preview_source = "phone_camera"
+        session.runtime_state = RuntimeState()
+        session._mobile_capture_request_seq = 0
+        session._mobile_capture_request = None
+        session._last_gesture_capture_result = None
+        session._last_gesture_capture_error = None
+
+        result = session.trigger_capture(reason="gesture_ok", auto_analyze=True)
+        duplicate = session.trigger_capture(reason="gesture_ok", auto_analyze=True)
+
+        self.assertIsNone(result.path)
+        self.assertIsNotNone(result.mobile_capture_request)
+        self.assertEqual(result.mobile_capture_request["reason"], "gesture_ok")
+        self.assertEqual(result.mobile_capture_request["status"], "pending")
+        self.assertEqual(
+            duplicate.mobile_capture_request["id"],
+            result.mobile_capture_request["id"],
+        )
+        self.assertIsNone(session.runtime_state.latest_capture_path)
+
+        acknowledged = session.acknowledge_mobile_capture(
+            request_id=result.mobile_capture_request["id"],
+            success=True,
+            local_path="/phone/DCIM/capture.jpg",
+        )
+
+        self.assertIsNotNone(acknowledged)
+        self.assertEqual(acknowledged["status"], "completed")
+        self.assertIsNone(session._mobile_capture_request)
+        self.assertIsNone(session.runtime_state.latest_capture_path)
 
     def test_overlay_settings_accept_compat_aliases(self) -> None:
         settings = OverlaySettings()
@@ -220,6 +256,50 @@ class OverlayGestureTest(unittest.TestCase):
         self.assertIsNotNone(session._async_detector)
         self.assertIsNotNone(session._frame_processor)
 
+    def test_gesture_enable_forces_hand_landmarks_in_performance_profile(self) -> None:
+        class FakeDetector:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        session = object.__new__(DeviceSessionContext)
+        session._lock = threading.RLock()
+        session.config = default_config("mobile_push")
+        apply_rpi_profile(session.config, RaspberryPiProfile.performance())
+        session.runtime_state = RuntimeState()
+        session.runtime_state.loop_running = True
+        session._async_detector = FakeDetector()
+        session._frame_processor = object()
+        session._gesture_settings = GestureSettings()
+        session._gesture_state = GestureCaptureState()
+        rebuilt = []
+
+        def ensure_detector_pipeline() -> None:
+            rebuilt.append(True)
+            session._async_detector = FakeDetector()
+            session._frame_processor = object()
+
+        session._ensure_detector_pipeline = ensure_detector_pipeline
+        session.build_status = lambda: {
+            "enable_hand_landmarks": session.config.detection.enable_hand_landmarks
+        }
+
+        result = session.update_runtime_options(gesture={"force_ok_enabled": True})
+
+        self.assertTrue(result["enable_hand_landmarks"])
+        self.assertTrue(session.config.detection.enable_hand_landmarks)
+        self.assertEqual(session.config.detection.async_skip_frames, 0)
+        self.assertGreaterEqual(session.config.detection.max_inference_side, 720)
+        self.assertGreaterEqual(session.config.detection.detector_fps, 10.0)
+        self.assertLessEqual(session.config.detection.min_confidence, 0.35)
+        self.assertEqual(rebuilt, [True])
+
+        session.update_runtime_options(detection={"enable_hand_landmarks": False})
+
+        self.assertTrue(session.config.detection.enable_hand_landmarks)
+
     def test_gesture_capture_countdown_status(self) -> None:
         session = object.__new__(DeviceSessionContext)
         session._last_gesture_capture_error = "old error"
@@ -237,6 +317,31 @@ class OverlayGestureTest(unittest.TestCase):
                 "event": "force_capture",
                 "countdown_s": 3.0,
             },
+        )
+        self.assertFalse(session._gesture_countdown_status()["capture_in_progress"])
+
+    def test_gesture_suppression_blocks_immediate_repeat(self) -> None:
+        state = GestureCaptureState(stable_frames=2, open_hold_min_s=0.05)
+
+        self.assertIsNone(
+            state.update([_ok_hand()], 1.0, ready_for_pose_capture=False, force_ok_enabled=True)
+        )
+        self.assertEqual(
+            state.update([_ok_hand()], 1.1, ready_for_pose_capture=False, force_ok_enabled=True),
+            "force_capture",
+        )
+
+        state.suppress_for(1.8, now=1.2)
+
+        self.assertIsNone(
+            state.update([_ok_hand()], 2.0, ready_for_pose_capture=False, force_ok_enabled=True)
+        )
+        self.assertIsNone(
+            state.update([_ok_hand()], 3.1, ready_for_pose_capture=False, force_ok_enabled=True)
+        )
+        self.assertEqual(
+            state.update([_ok_hand()], 3.2, ready_for_pose_capture=False, force_ok_enabled=True),
+            "force_capture",
         )
 
     def test_performance_profile_keeps_tracking_anchor_lightweight(self) -> None:

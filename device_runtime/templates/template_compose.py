@@ -197,6 +197,10 @@ class TemplateComposeEngine:
         face_anchor_norm_y: float | None = None
         head_anchor_norm_x: float | None = None
         head_anchor_norm_y: float | None = None
+        face_anchor = _face_anchor_from_pose(valid_landmarks, detection.bbox)
+        if face_anchor is not None:
+            face_anchor_norm_x = max(0.0, min(1.0, float(face_anchor.x) / float(max(1, w))))
+            face_anchor_norm_y = max(0.0, min(1.0, float(face_anchor.y) / float(max(1, h))))
         head_anchor = _head_anchor_from_pose(valid_landmarks, detection.bbox)
         if head_anchor is not None:
             head_anchor_norm_x = max(0.0, min(1.0, float(head_anchor.x) / float(max(1, w))))
@@ -233,9 +237,12 @@ class TemplateComposeEngine:
         follow_mode: str = "shoulders",
     ) -> ComposeFeedback:
         h, w = frame_shape[:2]
-        anchor = detection.anchor_point if detection.anchor_point is not None else detection.bbox.center
-        curr_x = float(anchor.x) / float(max(1, w))
-        curr_y = float(anchor.y) / float(max(1, h))
+
+        # Select current anchor from detection based on follow_mode so it matches
+        # the template's corresponding anchor point (face→face, shoulders→shoulders).
+        current_anchor = TemplateComposeEngine._current_anchor_for_mode(detection, follow_mode)
+        curr_x = float(current_anchor.x) / float(max(1, w))
+        curr_y = float(current_anchor.y) / float(max(1, h))
         if mirror_template:
             curr_x = 1.0 - curr_x
         curr_area_ratio = float(detection.bbox.area) / float(max(1, h * w))
@@ -244,6 +251,12 @@ class TemplateComposeEngine:
         # remain intuitive under mirror preview.
         if follow_mode == "face":
             if (
+                profile.face_anchor_norm_x is not None
+                and profile.face_anchor_norm_y is not None
+            ):
+                target_anchor_x = profile.face_anchor_norm_x
+                target_anchor_y = profile.face_anchor_norm_y
+            elif (
                 profile.head_anchor_norm_x is not None
                 and profile.head_anchor_norm_y is not None
             ):
@@ -295,7 +308,7 @@ class TemplateComposeEngine:
 
 
 class GestureCaptureState:
-    DEFAULT_STABLE_FRAMES = 10
+    DEFAULT_STABLE_FRAMES = 4
     DEFAULT_OPEN_HOLD_MIN_S = 0.35
 
     def __init__(
@@ -319,6 +332,11 @@ class GestureCaptureState:
     def set_sensitivity(self, *, stable_frames: int, open_hold_min_s: float) -> None:
         self._stable_frames = max(2, int(stable_frames))
         self._open_hold_min_s = max(0.05, float(open_hold_min_s))
+
+    def suppress_for(self, duration_s: float, now: float | None = None) -> None:
+        base = time.time() if now is None else now
+        self._cooldown_until = max(self._cooldown_until, base + max(0.0, float(duration_s)))
+        self.reset()
 
     def reset_pose_capture(self) -> None:
         self._phase = "idle"
@@ -383,6 +401,40 @@ class GestureCaptureState:
             self.reset()
             return "capture"
         return None
+
+    @staticmethod
+    def _current_anchor_for_mode(detection: DetectionResult, follow_mode: str) -> Point:
+        """Pick the detection anchor that corresponds to the template's anchor for the given follow_mode."""
+        bbox_center = detection.bbox.center
+        landmarks = detection.pose_landmarks or {}
+
+        if follow_mode == "face":
+            # Face anchor: nose (0) → ear midpoint (7,8) → bbox upper-center
+            nose = landmarks.get(0)
+            if nose is not None:
+                return Point(x=float(nose.x), y=float(nose.y))
+            left_ear = landmarks.get(7)
+            right_ear = landmarks.get(8)
+            if left_ear is not None and right_ear is not None:
+                return Point(
+                    x=(float(left_ear.x) + float(right_ear.x)) * 0.5,
+                    y=(float(left_ear.y) + float(right_ear.y)) * 0.5,
+                )
+            # Fallback: upper-center of bbox as approximate face position
+            return Point(x=float(bbox_center.x), y=float(bbox_center.y) - float(detection.bbox.h) * 0.15)
+
+        # Shoulders mode: midpoint of left (11) and right (12) shoulder → anchor_point → bbox center
+        left_sh = landmarks.get(11)
+        right_sh = landmarks.get(12)
+        if left_sh is not None and right_sh is not None:
+            return Point(
+                x=(float(left_sh.x) + float(right_sh.x)) * 0.5,
+                y=(float(left_sh.y) + float(right_sh.y)) * 0.5,
+            )
+        anchor = detection.anchor_point
+        if anchor is not None:
+            return Point(x=float(anchor.x), y=float(anchor.y))
+        return Point(x=float(bbox_center.x), y=float(bbox_center.y))
 
 
 def _normalize_pose_points(landmarks: dict[int, Point]) -> dict[int, tuple[float, float]]:
@@ -479,6 +531,27 @@ def _head_anchor_from_pose(landmarks: dict[int, Point], bbox) -> Point | None:
     if bbox is not None:
         # Fallback: use upper-center of torso bbox as a rough "head" anchor.
         return Point(x=float(bbox.center.x), y=float(bbox.y + bbox.h * 0.18))
+    return None
+
+
+def _face_anchor_from_pose(landmarks: dict[int, Point], bbox) -> Point | None:
+    nose = landmarks.get(0)
+    left_ear = landmarks.get(7)
+    right_ear = landmarks.get(8)
+    face_points = [
+        point
+        for point in (nose, left_ear, right_ear)
+        if point is not None
+    ]
+    if nose is not None:
+        return Point(x=float(nose.x), y=float(nose.y))
+    if face_points:
+        return Point(
+            x=sum(float(point.x) for point in face_points) / float(len(face_points)),
+            y=sum(float(point.y) for point in face_points) / float(len(face_points)),
+        )
+    if bbox is not None:
+        return Point(x=float(bbox.center.x), y=float(bbox.y + bbox.h * 0.14))
     return None
 
 
