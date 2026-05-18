@@ -4,14 +4,46 @@
 
 ## 职责
 
-- 管理员登录。
+- 管理员登录和登录态保存。
 - 概览统计。
-- 用户管理和套餐绑定。
+- 用户管理。
 - 套餐管理、额度配置和 AI Provider 绑定。
 - 推荐模板管理和图片上传。
 - 设备登记信息管理。
-- 抓拍记录和 AI 任务回看、批量删除。
+- 媒体记录查看和删除。
+- AI 任务查看、删除和错误排查。
 - 多 AI Provider 配置管理。
+
+## 技术组成
+
+| 技术 | 使用位置 | 作用 |
+| --- | --- | --- |
+| Vue 3 | `src/views`, `src/components` | 页面和组件 |
+| Vite | `npm run dev/build` | 开发服务器和生产构建 |
+| Element Plus | 管理后台 UI | 表格、表单、弹窗、分页、按钮 |
+| Pinia | `src/stores` | 管理端 token、用户和 API 地址 |
+| Vue Router | `src/router` | 路由和登录拦截 |
+| Axios | `src/api` | 调用 `/api/admin/*` |
+
+## 页面
+
+| 路由 | 页面 | 说明 |
+| --- | --- | --- |
+| `/login` | `LoginView.vue` | 管理员登录 |
+| `/admin/overview` | `WorkbenchView.vue` | 总览统计 |
+| `/admin/users` | `UsersView.vue` | 用户管理 |
+| `/admin/plans` | `PlansView.vue` | 套餐管理 |
+| `/admin/templates` | `RecommendedTemplatesView.vue` | 推荐模板 |
+| `/admin/devices` | `DevicesView.vue` | 设备登记 |
+| `/admin/captures` | `CapturesView.vue` | 媒体记录 |
+| `/admin/ai-tasks` | `AiTasksView.vue` | AI 任务 |
+| `/admin/ai-provider` | `AiProviderConfigsView.vue` | AI Provider 配置 |
+
+## AI Provider 管理
+
+后台维护的 Provider 会写入 `ai_provider_configs`。手机端创建 AI 任务时，后端按套餐和 Provider 状态选择可用配置。
+
+不要把真实 API Key 写入前端代码。Key 只通过后台表单提交到后端，由后端调用 Provider。
 
 ## 启动
 
@@ -34,34 +66,10 @@ http://127.0.0.1:5173
 npm run build
 ```
 
-## 目录
+## 检查
 
-| 目录 | 说明 |
-| --- | --- |
-| `src/views` | 页面视图 |
-| `src/components` | 侧栏、顶部栏等通用组件 |
-| `src/api` | Axios 实例和管理端接口封装 |
-| `src/stores` | Pinia 状态：token、当前用户、API 地址 |
-| `src/router` | 前端路由和登录拦截 |
-| `src/styles` | 全局样式 |
+```powershell
+npm run build
+```
 
-## 页面路由
-
-- `/login`
-- `/admin/overview`
-- `/admin/users`
-- `/admin/plans`
-- `/admin/templates`
-- `/admin/devices`
-- `/admin/captures`
-- `/admin/ai-tasks`
-- `/admin/ai-provider`
-
-## 套餐和 AI 配置
-
-套餐通过 `feature_flags` 影响后端 AI Provider 选择：
-
-- `default_ai_provider_code`：套餐默认 Provider。
-- `available_ai_provider_codes`：套餐可用 Provider 列表。
-
-后端优先使用套餐默认配置，其次使用可用列表中的第一个可用配置，最后退回系统默认配置或 mock 结果。
+如果出现 chunk 体积警告，通常是 Element Plus 和管理后台页面集中打包导致，不影响本地演示；正式部署可再做路由级动态导入。

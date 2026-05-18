@@ -1,55 +1,174 @@
 # device_runtime
 
-`device_runtime` 是树莓派或本机联调用的设备运行时。它提供本地 FastAPI 控制接口，负责手机推流接收、OpenCV 帧处理、人体/手部/人脸检测、overlay 渲染、云台控制、模板构图、手势抓拍、设备端 AI 和本地抓拍文件管理。
+`device_runtime` 是树莓派或本机调试运行时。它的核心职责是“让设备动起来”：接收手机推送帧、做轻量检测、计算跟踪目标、控制 TTL 总线舵机云台，并向手机返回设备状态。
 
-## 启动入口
+生产 AI 能力不应依赖树莓派保存 API Key。当前产品主流程中，自动找角度和背景锁定由手机采集候选帧后交给 `backend` 分析；`device_runtime` 只负责按手机命令转动和返回状态。
 
-```powershell
-cd device_runtime
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+## 职责边界
 
-$env:DEVICE_SERVO_DRIVER="mock"
-uvicorn device_runtime.api.app:app --reload --host 0.0.0.0 --port 8001
-```
+- 接收手机端推送的相机帧。
+- OpenCV/MediaPipe 本地检测人体、手部、人脸信息。
+- 根据手动控制、自动跟随、模板构图生成云台移动指令。
+- 通过 TTL 总线串口控制 pan/tilt 两个舵机。
+- 提供设备状态、检测状态、手势状态、云台状态。
+- 保留本地抓拍、设备端 AI、WebRTC、预览流等兼容/调试接口。
 
-`main.py` 不是当前控制 API 的启动入口。真实 API 入口是 `device_runtime.api.app:app`。
+不作为主预览画面来源，不保存手机最终照片/视频，不保存生产 AI Key。
 
-## 当前视频链路
+## 技术组成
 
-手机端默认使用 Android WebSocket 推流：
+| 技术 | 使用位置 | 作用 |
+| --- | --- | --- |
+| FastAPI | `api/app.py`, `api/routes` | 本地 HTTP/WebSocket 控制 API |
+| Uvicorn | 启动命令 | ASGI 服务运行 |
+| WebSocket | `stream.py`, `status.py` | 手机帧上行、调试预览下行 |
+| OpenCV | 帧解码、缩放、绘制 | NV21/JPEG 转 BGR、图像处理 |
+| MediaPipe | `vision/detector.py` | 人体姿态、手部、面部关键点 |
+| pyserial | `control/gimbal_controller.py` | TTL 总线舵机串口控制 |
+| aiortc | `api/routes/webrtc.py` | 保留 WebRTC 实验 signaling |
+| Pillow | 上传模板/图片处理 | 图像读取和格式处理 |
+
+## 当前主链路
 
 ```text
-mobile_client camera ImageStream
--> WS /api/device/stream/mobile-ws
--> mobile_push_frame_store
--> OpenCV BGR frame
--> detector / template compose / gimbal / overlay / capture
--> WS /api/device/preview-ws
--> mobile_client preview
+mobile_client 手机相机
+-> /api/device/stream/mobile-ws
+-> DeviceSessionContext 接收帧
+-> AsyncDetector / FrameProcessor
+-> TrackingController / TemplateComposeEngine
+-> GimbalController
+-> TTLBusSerialDriver
+-> 舵机转动
+-> /api/device/status 返回状态给手机
 ```
 
-运行时也保留 WebRTC signaling：
+手机端主画面仍然是手机本地 `CameraPreview`。设备端 `preview-ws` / `preview.jpg` 保留为调试和兼容用途，不是当前主画面。
 
-- `POST /api/device/webrtc/offer`
-- 依赖 `aiortc`
-- 用于后续切换或实验，不是当前手机端默认启动路径
+## 云台控制
 
-调试接口：
+真实硬件使用 TTL 总线舵机：
 
-- `POST /api/device/stream/frame`
-- `GET /api/device/preview.jpg`
+- pan 轴默认 servo id `0`
+- tilt 轴默认 servo id `1`
+- 默认串口 `/dev/ttyUSB0`
+- Windows 本机默认可使用 `mock` 驱动
 
-## 树莓派性能档
+关键类：
 
-推荐现场使用：
+- `TTLBusSerialDriver`：封装串口协议和角度到脉宽转换。
+- `GimbalController`：维护角度、回中、手动移动、连续控制、跟踪缓动。
+- `TrackingController`：根据目标偏移计算云台修正量，包含死区、刹车区、反向保护和灵敏度。
+- `TemplateComposeEngine`：计算实时人物点与模板点的对齐误差。
+
+## 跟随和模板构图
+
+模式：
+
+- `MANUAL` / `gimbal_manual`：手动控制。
+- `AUTO_TRACK` / `gimbal_follow`：自动跟随实时人物。
+- `SMART_COMPOSE` / `gimbal_template`：模板构图，对齐模板中心点。
+
+跟随目标：
+
+- `shoulders`：肩部中心点。
+- `face`：面部中心点。
+- `auto` / `upper_body`：根据可用检测结果自动选择。
+
+模板构图时，手机会把后端模板数据一起传给设备端，设备端按归一化模板点计算偏移，云台只执行转动。
+
+## 手势抓拍
+
+手势抓拍依赖手部 landmarks。设备端会在启用手势抓拍时自动提高必要检测配置：
+
+- 打开 `enable_hand_landmarks`。
+- 降低/取消跳帧。
+- 提高最小检测质量。
+
+触发后会进入倒计时，倒计时期间不重复触发：
+
+```text
+检测到手势
+-> 3 秒倒计时
+-> 倒计时期间忽略新手势
+-> 触发一次抓拍事件
+-> 冷却后才能再次触发
+```
+
+当前产品最终照片应由手机保存到相册。设备端本地抓拍接口仍存在，主要用于兼容、调试和手机拉取后再保存。
+
+## 环境变量
+
+### 硬件
+
+| 变量 | 说明 |
+| --- | --- |
+| `DEVICE_SERVO_DRIVER` | `mock` 或 `ttl_bus` |
+| `DEVICE_TTL_SERIAL_PORT` | TTL 总线串口，例如 `/dev/ttyUSB0` |
+| `DEVICE_TTL_BAUDRATE` | 串口波特率 |
+| `DEVICE_TTL_MOVE_TIME_MS` | 单次舵机命令移动时间 |
+| `DEVICE_TTL_TIMEOUT_S` | 串口超时 |
+| `DEVICE_PAN_SERVO_ID` | 水平舵机 ID |
+| `DEVICE_TILT_SERVO_ID` | 俯仰舵机 ID |
+| `DEVICE_PAN_MIN_ANGLE` / `DEVICE_PAN_MAX_ANGLE` | 水平角度限制 |
+| `DEVICE_TILT_MIN_ANGLE` / `DEVICE_TILT_MAX_ANGLE` | 俯仰角度限制 |
+
+### 性能和检测
+
+| 变量 | 说明 |
+| --- | --- |
+| `DEVICE_RPI_PROFILE` | `performance`、`balanced`、`quality` |
+| `DEVICE_DETECTOR_FPS` | 检测帧率 |
+| `DEVICE_MAX_INFERENCE_SIDE` | 检测输入最大边 |
+| `DEVICE_ASYNC_SKIP_FRAMES` | 异步检测跳帧 |
+| `DEVICE_ENABLE_POSE_LANDMARKS` | 是否计算人体骨架 |
+| `DEVICE_ENABLE_FACE_LANDMARKS` | 是否计算人脸点 |
+| `DEVICE_ENABLE_HAND_LANDMARKS` | 是否计算手部点 |
+| `DEVICE_TRACKING_ANCHOR_MODE` | 默认跟踪锚点模式 |
+
+### 跟踪
+
+| 变量 | 说明 |
+| --- | --- |
+| `DEVICE_TRACKING_DEADZONE_PX` | 普通跟随死区 |
+| `DEVICE_TRACKING_COMPOSE_DEADZONE_PX` | 模板构图死区 |
+| `DEVICE_TRACKING_GAIN_X` / `DEVICE_TRACKING_GAIN_Y` | 水平/俯仰增益 |
+| `DEVICE_TRACKING_MAX_DELTA_DEG` | 单次最大修正角 |
+| `DEVICE_TRACKING_MIN_COMMAND_INTERVAL_S` | 最小命令间隔 |
+| `DEVICE_TRACKING_COMMAND_SMOOTH_ALPHA` | 命令平滑系数 |
+| `DEVICE_TRACKING_SENSITIVITY` | 运行时灵敏度 |
+
+### 预览和 overlay
+
+| 变量 | 说明 |
+| --- | --- |
+| `DEVICE_PREVIEW_FPS` | 调试预览帧率 |
+| `DEVICE_PREVIEW_SCALE` | 调试预览缩放 |
+| `DEVICE_PREVIEW_JPEG_QUALITY` | 调试预览 JPEG 质量 |
+| `DEVICE_ENABLE_OVERLAY` | 设备端调试 overlay |
+| `DEVICE_SHOW_BODY_SKELETON` | 显示人体骨架 |
+| `DEVICE_SHOW_FACE_MESH` | 显示人脸网格 |
+| `DEVICE_SHOW_HANDS` | 显示手部骨架 |
+| `DEVICE_SHOW_TRACKING_ANCHOR` | 显示跟踪锚点 |
+
+## 启动
+
+Windows mock：
+
+```powershell
+cd <repo-root>
+.\.venv\Scripts\Activate.ps1
+pip install -r device_runtime\requirements.txt
+
+$env:DEVICE_SERVO_DRIVER="mock"
+python -m uvicorn device_runtime.api.app:app --reload --host 0.0.0.0 --port 8001
+```
+
+树莓派：
 
 ```bash
-cd device_runtime
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+cd ~/camera_assistant_pi
+source .venv/bin/activate
+pip install -r device_runtime/requirements.txt
 
 export DEVICE_RPI_PROFILE=performance
 export DEVICE_SERVO_DRIVER=ttl_bus
@@ -57,101 +176,14 @@ export DEVICE_TTL_SERIAL_PORT=/dev/ttyUSB0
 export DEVICE_PAN_SERVO_ID=0
 export DEVICE_TILT_SERVO_ID=1
 
-uvicorn device_runtime.api.app:app --host 0.0.0.0 --port 8001
+python -m uvicorn device_runtime.api.app:app --host 0.0.0.0 --port 8001
 ```
 
-### profile 说明
+## 检查
 
-| profile | 检测 | 预览 | 适用场景 |
-| --- | --- | --- | --- |
-| `performance` | 低检测频率、小输入尺寸，默认关闭完整 landmarks | 较低码率 | 树莓派长时间稳定运行 |
-| `balanced` | 中等检测频率，默认关闭完整 landmarks | 中等预览 | 现场调试 |
-| `quality` | 更高检测质量，打开更多 landmarks | 更清晰预览 | 短时间演示 |
+```powershell
+python -m compileall -q device_runtime
+python -m unittest device_runtime.tests.test_track_target_contract
+```
 
-如果开启人体骨骼或手部骨骼后变卡，优先降低：
-
-- `DEVICE_DETECTOR_FPS`
-- `DEVICE_MAX_INFERENCE_SIDE`
-- `DEVICE_PREVIEW_SCALE`
-- `DEVICE_PREVIEW_FPS`
-
-## 检测和 overlay 开关
-
-检测开关控制是否计算完整 landmarks：
-
-- `DEVICE_ENABLE_POSE_LANDMARKS`
-- `DEVICE_ENABLE_FACE_LANDMARKS`
-- `DEVICE_ENABLE_HAND_LANDMARKS`
-- `DEVICE_TRACKING_ANCHOR_MODE`
-
-显示开关控制是否绘制到预览：
-
-- `DEVICE_ENABLE_OVERLAY`
-- `DEVICE_SHOW_BODY_SKELETON`
-- `DEVICE_SHOW_FACE_MESH`
-- `DEVICE_SHOW_HANDS`
-- `DEVICE_SHOW_TRACKING_ANCHOR`
-
-移动端通过 `PATCH /api/device/config` 切换这些开关。当前代码在切换 pose/hand/face 检测后会重建 detector 和 frame processor，避免运行中的帧循环继续使用旧 detector。
-
-## 手势抓拍
-
-手势抓拍依赖手部 landmarks。需要确保：
-
-- `enable_hand_landmarks=true`
-- `gesture.capture_enabled=true`
-- 预览中能检测到手部
-
-触发手势后不会立刻拍照，而是进入 3 秒倒计时：
-
-- 设备端 overlay 会显示倒计时。
-- `/api/device/status` 的 `gesture_status.capture_countdown` 会返回倒计时状态。
-- 手机端设备联动 HUD 会显示倒计时提醒。
-- 倒计时结束后调用设备端 `trigger_capture`。
-- 抓拍文件保存在 `device_runtime/captures`，不会自动同步到后端历史。
-
-如果启用 `gesture.auto_analyze_enabled`，抓拍后会触发设备端本地 AI 流程；它不等同于后端 `/api/mobile/ai/analyze-photo`。
-
-## 关键接口
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/api/device/health` | 健康检查 |
-| `GET` | `/api/device/status` | 会话、云台、检测、手势、AI、overlay 状态 |
-| `PATCH` | `/api/device/config` | 更新 overlay、检测、手势配置 |
-| `POST` | `/api/device/session/open` | 打开设备会话 |
-| `POST` | `/api/device/session/close` | 关闭设备会话 |
-| `POST` | `/api/device/stream/start` | 切换视频源 |
-| `WS` | `/api/device/stream/mobile-ws` | 手机 NV21 帧上行 |
-| `WS` | `/api/device/preview-ws` | JPEG 预览下行 |
-| `POST` | `/api/device/capture/trigger` | 手动触发设备抓拍 |
-| `GET` | `/api/device/capture/list` | 查看设备本地抓拍文件 |
-| `GET` | `/api/device/capture/file` | 下载设备本地抓拍文件 |
-| `POST` | `/api/device/control/manual-move` | 手动云台移动 |
-| `POST` | `/api/device/control/mode` | 设置运行模式 |
-| `POST` | `/api/device/control/home` | 云台回中 |
-| `POST` | `/api/device/control/follow-mode` | 设置跟随模式 |
-
-完整接口见 [接口契约](../docs/接口契约.md)。
-
-## 硬件说明
-
-- 推荐真实硬件方案是 TTL 总线舵机。
-- 舵机必须使用独立外接电源，并与树莓派控制侧共地。
-- Windows 本地联调默认使用 `mock` 驱动。
-- PCA9685 方案已不作为当前主推路径。
-
-## 重启规则
-
-需要重启 `uvicorn` 的情况：
-
-- 修改 `device_runtime` 代码。
-- 修改依赖或重新安装 `requirements.txt`。
-- 修改树莓派启动环境变量。
-- 修改云台串口、舵机 ID、检测默认配置。
-
-不一定需要重启的情况：
-
-- 手机端切换 overlay、手势、检测开关。
-- 手机端打开/关闭会话。
-- 手机端手动触发抓拍。
+如果完整 API 测试导入 `aiortc` 失败，说明当前虚拟环境缺 WebRTC 可选依赖；WebSocket 主链路不依赖它。
