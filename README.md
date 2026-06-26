@@ -12,23 +12,23 @@
 
 | 模块 | 技术栈 | 当前职责 |
 | --- | --- | --- |
-| `mobile_client` | Flutter, Dart, camera, ML Kit, WebSocket, SharedPreferences | 手机 App：登录、首页、拍摄、录像、模板构图、历史、详细设置、设备联动主画面、相册保存、手机端视觉 overlay、AI 多角度扫描主控 |
-| `device_runtime` | Python, FastAPI, OpenCV, MediaPipe, pyserial, WebSocket, aiortc | 树莓派/本机运行时：TTL 总线舵机云台、手动控制、自动跟随、模板跟随、手机帧接收、本地检测、手势抓拍兼容接口 |
-| `backend` | Python, FastAPI, SQLAlchemy, PostgreSQL, httpx, Pydantic | 业务后端：用户、套餐、订阅、设备、模板、拍摄会话、媒体记录、AI 任务、AI Provider 调用 |
-| `admin_web` | Vue 3, Vite, Element Plus, Pinia, Axios | 管理后台：用户、套餐、推荐模板、设备、媒体记录、AI 任务、AI Provider 配置 |
+| `mobile_client` | Flutter, Dart, camera, ML Kit, WebSocket, WebRTC, SharedPreferences | 手机 App：登录、首页、拍摄、录像、模板构图、历史、详细设置、设备联动主画面、相册保存、手机端视觉 overlay、AI 多角度扫描主控 |
+| `device_runtime` | Python, FastAPI, OpenCV, MediaPipe, pyserial, WebSocket, aiortc | 树莓派/本机运行时：TTL 总线舵机云台、手动控制、自动跟随、模板跟随、手机帧接收、本地检测、手势抓拍兼容接口、设备侧 AI 兼容接口 |
+| `backend` | Python, FastAPI, SQLAlchemy, PostgreSQL, httpx, Pydantic, MediaPipe/OpenCV/Pillow | 业务后端：用户、套餐、订阅、设备、模板、推荐模板自动识别、拍摄会话、媒体记录、AI 任务、AI Provider 调用 |
+| `admin_web` | Vue 3, Vite, Element Plus, Pinia, Axios | 管理后台：工作台、用户、套餐、推荐模板、媒体记录、AI 任务、AI Provider 配置；后端保留设备 CRUD，当前前端未挂载设备管理入口 |
 | `database` | PostgreSQL SQL | 数据表、约束、索引、触发器和兼容旧库的结构说明 |
 
 ## 当前主要能力
 
 - 手机端普通拍照、录像、模板构图、背景分析、AI 连拍选优、历史记录。
 - 手机端详细设置页集中管理高级参数，普通拍摄页和设备联动页只保留常用入口。
-- 模板上传后由手机本地 ML Kit 识别人像关键点，生成模板框、骨架线、肩部中心点、面部中心点等归一化结构。
+- 模板上传后由手机本地 ML Kit 或后台推荐模板上传服务识别人像关键点，生成 `bbox_norm`、`head_bbox_norm`、`pose_points_image`、`pose_points_bbox` 和肩部/面部锚点等归一化结构。
 - 设备联动页主画面使用手机本地 `CameraPreview`，所有视觉叠加在手机端绘制。
 - 设备联动页可手动控制云台、自动跟随、模板构图、选择跟随肩部/人脸中心点。
 - 设备联动页拍照和录像由手机相机完成，照片/视频保存到手机相册；按设置可在拍照后上传后端并触发云端 AI 分析。
 - AI 自动找角度和背景锁定由手机做主控：手机指挥云台扫描多个角度、缓存候选帧、统一上传后端 AI 分析，再让树莓派转到最佳角度。
 - 后端统一管理 AI Provider，支持 OpenAI-compatible 视觉模型调用和失败降级记录。
-- 管理后台可查看用户、套餐、媒体记录、AI 任务，并维护多个 AI Provider 配置。
+- 管理后台可查看工作台统计、用户、套餐、推荐模板、媒体记录、AI 任务，并维护多个 AI Provider 配置。设备登记接口仍在业务后端，当前后台前端侧栏未启用设备管理页面。
 
 ## 推荐阅读
 
@@ -39,11 +39,12 @@
 3. [部署说明](./docs/部署说明.md)
 4. [统一采集存储与协同流程](./docs/统一采集存储与协同流程.md)
 5. [演示流程](./docs/演示流程.md)
-6. [mobile_client 说明](./mobile_client/README.md)
-7. [device_runtime 说明](./device_runtime/README.md)
-8. [backend 说明](./backend/README.md)
-9. [admin_web 说明](./admin_web/README.md)
-10. [database 说明](./database/README.md)
+6. [重构开发文档-Agent执行版](./docs/重构开发文档-Agent执行版.md)
+7. [mobile_client 说明](./mobile_client/README.md)
+8. [device_runtime 说明](./device_runtime/README.md)
+9. [backend 说明](./backend/README.md)
+10. [admin_web 说明](./admin_web/README.md)
+11. [database 说明](./database/README.md)
 
 ## 快速启动
 

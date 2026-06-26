@@ -24,6 +24,16 @@ class TemplateRead(SchemaModel):
     updated_at: datetime
 
 
+class TemplateImageUploadRead(SchemaModel):
+    file_url: str
+    storage_provider: str
+    storage_path: str
+    relative_path: str
+    original_filename: str
+    content_type: str | None = None
+    template_data: dict = Field(default_factory=dict)
+
+
 class TemplateCreateRequest(SchemaModel):
     name: str
     template_type: str = "pose"

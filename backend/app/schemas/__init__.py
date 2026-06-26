@@ -19,7 +19,12 @@ from backend.app.schemas.device import DeviceRead, DeviceWriteRequest
 from backend.app.schemas.plan import PlanRead, PlanWriteRequest
 from backend.app.schemas.statistics import OverviewStatisticsRead
 from backend.app.schemas.subscription import SubscriptionRead
-from backend.app.schemas.template import RecommendedTemplateWriteRequest, TemplateCreateRequest, TemplateRead
+from backend.app.schemas.template import (
+    RecommendedTemplateWriteRequest,
+    TemplateCreateRequest,
+    TemplateImageUploadRead,
+    TemplateRead,
+)
 from backend.app.schemas.user import UserCreateRequest, UserRead, UserUpdateRequest
 
 __all__ = [
@@ -50,6 +55,7 @@ __all__ = [
     "SchemaModel",
     "SubscriptionRead",
     "TemplateCreateRequest",
+    "TemplateImageUploadRead",
     "TemplateRead",
     "UserCreateRequest",
     "UserRead",

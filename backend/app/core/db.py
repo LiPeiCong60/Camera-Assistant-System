@@ -66,6 +66,7 @@ def init_database(database_url: str) -> dict:
 
     Base.metadata.create_all(engine)
     _apply_schema_compatibility_patches(engine)
+    _sync_postgres_identity_sequences(engine)
     return {
         "created_tables": sorted(Base.metadata.tables.keys()),
     }
@@ -205,3 +206,44 @@ def _apply_schema_compatibility_patches(engine: Engine) -> None:
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def _sync_postgres_identity_sequences(engine: Engine) -> None:
+    """Keep BIGSERIAL sequences aligned after manual imports or seed data."""
+
+    if engine.dialect.name != "postgresql":
+        return
+
+    table_names = (
+        "users",
+        "plans",
+        "user_subscriptions",
+        "devices",
+        "templates",
+        "capture_sessions",
+        "captures",
+        "ai_tasks",
+        "ai_provider_configs",
+    )
+
+    with engine.begin() as connection:
+        for table_name in table_names:
+            sequence_name = connection.execute(
+                text("SELECT pg_get_serial_sequence(:table_name, 'id')"),
+                {"table_name": table_name},
+            ).scalar()
+            if not sequence_name:
+                continue
+            max_id = connection.execute(
+                text(f"SELECT MAX(id) FROM {table_name}"),
+            ).scalar()
+            next_value = int(max_id or 1)
+            is_called = max_id is not None
+            connection.execute(
+                text("SELECT setval(:sequence_name, :next_value, :is_called)"),
+                {
+                    "sequence_name": sequence_name,
+                    "next_value": next_value,
+                    "is_called": is_called,
+                },
+            )

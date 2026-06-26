@@ -13,7 +13,7 @@
 - 提供设备状态、检测状态、手势状态、云台状态。
 - 保留本地抓拍、设备端 AI、WebRTC、预览流等兼容/调试接口。
 
-不作为主预览画面来源，不保存手机最终照片/视频，不保存生产 AI Key。
+不作为主预览画面来源，不保存手机最终照片/视频，不保存生产 AI Key。`/api/device/ai/*` 如需独立调试，可用 `SILICONFLOW_*` 环境变量启用兼容 AI，不属于当前生产主链路。
 
 ## 技术组成
 
@@ -110,7 +110,9 @@ mobile_client 手机相机
 | `DEVICE_PAN_SERVO_ID` | 水平舵机 ID |
 | `DEVICE_TILT_SERVO_ID` | 俯仰舵机 ID |
 | `DEVICE_PAN_MIN_ANGLE` / `DEVICE_PAN_MAX_ANGLE` | 水平角度限制 |
+| `DEVICE_PAN_HOME_ANGLE` / `DEVICE_PAN_MAX_STEP_DEG` | 水平回中角和单步限制 |
 | `DEVICE_TILT_MIN_ANGLE` / `DEVICE_TILT_MAX_ANGLE` | 俯仰角度限制 |
+| `DEVICE_TILT_HOME_ANGLE` / `DEVICE_TILT_MAX_STEP_DEG` | 俯仰回中角和单步限制 |
 
 ### 性能和检测
 
@@ -124,17 +126,24 @@ mobile_client 手机相机
 | `DEVICE_ENABLE_FACE_LANDMARKS` | 是否计算人脸点 |
 | `DEVICE_ENABLE_HAND_LANDMARKS` | 是否计算手部点 |
 | `DEVICE_TRACKING_ANCHOR_MODE` | 默认跟踪锚点模式 |
+| `DEVICE_ENABLE_YOLO` | 可选启用 YOLO 检测；默认依赖列表不安装 YOLO/torch，缺少时会回落 MediaPipe/OpenCV |
 
 ### 跟踪
 
 | 变量 | 说明 |
 | --- | --- |
+| `DEVICE_TRACKING_MIN_CONFIDENCE` | 跟踪目标最小置信度 |
 | `DEVICE_TRACKING_DEADZONE_PX` | 普通跟随死区 |
 | `DEVICE_TRACKING_COMPOSE_DEADZONE_PX` | 模板构图死区 |
+| `DEVICE_TRACKING_DEBOUNCE_FRAMES` | 跟踪目标防抖帧数 |
 | `DEVICE_TRACKING_GAIN_X` / `DEVICE_TRACKING_GAIN_Y` | 水平/俯仰增益 |
 | `DEVICE_TRACKING_MAX_DELTA_DEG` | 单次最大修正角 |
 | `DEVICE_TRACKING_MIN_COMMAND_INTERVAL_S` | 最小命令间隔 |
 | `DEVICE_TRACKING_COMMAND_SMOOTH_ALPHA` | 命令平滑系数 |
+| `DEVICE_TRACKING_MIN_OUTPUT_DEG` | 小于该角度的输出会被抑制 |
+| `DEVICE_TRACKING_MAX_ANCHOR_JUMP_PX` | 锚点跳变保护阈值 |
+| `DEVICE_TRACKING_SETTLE_AFTER_MOVE_S` | 云台移动后的稳定等待 |
+| `DEVICE_TRACKING_INVERT_PAN` / `DEVICE_TRACKING_INVERT_TILT` | 水平/俯仰方向反转 |
 | `DEVICE_TRACKING_SENSITIVITY` | 运行时灵敏度 |
 
 ### 预览和 overlay
@@ -149,6 +158,17 @@ mobile_client 手机相机
 | `DEVICE_SHOW_FACE_MESH` | 显示人脸网格 |
 | `DEVICE_SHOW_HANDS` | 显示手部骨架 |
 | `DEVICE_SHOW_TRACKING_ANCHOR` | 显示跟踪锚点 |
+
+### 设备侧 AI 兼容
+
+| 变量 | 说明 |
+| --- | --- |
+| `SILICONFLOW_API_KEY` | 只供设备侧 AI 兼容接口使用 |
+| `SILICONFLOW_MODEL` | 设备侧兼容 AI 模型名 |
+| `SILICONFLOW_ENDPOINT` | 设备侧兼容 AI endpoint |
+| `SILICONFLOW_TIMEOUT_S` | 设备侧兼容 AI 请求超时 |
+
+当前产品的自动找角度和背景锁定主流程由手机上传候选图到 `backend`，再由后端 AI Provider 分析；树莓派现场运行通常不需要配置这些变量。
 
 ## 启动
 

@@ -59,7 +59,17 @@
 }
 ```
 
-模板 `template_data` 存储人物框、头部框、关键点、骨架线、肩部中心点、面部中心点和来源图片地址。手机端绘制时根据当前画面尺寸转换为屏幕坐标。
+模板 `template_data` 存储人物框、头部框、关键点和肩部/面部/头部锚点。手机端绘制时根据当前画面尺寸转换为屏幕坐标。
+
+当前主字段为：
+
+- `bbox_norm`、`head_bbox_norm`：人物框和头部框，格式 `[x, y, w, h]`。
+- `pose_points_image`：整张图归一化关键点。
+- `pose_points_bbox`：人物框内归一化关键点。
+- `pose_points`：姿态相似度计算用的身体坐标系关键点。
+- `shoulder_anchor_norm_x/y`、`face_anchor_norm_x/y`、`head_anchor_norm_x/y`：模板对齐锚点。
+
+推荐模板通过 `templates.is_recommended_default` 和 `templates.recommended_sort_order` 区分；旧库由 `backend/app/core/db.py` 自动补列。
 
 ## 初始化
 
@@ -77,6 +87,8 @@ python backend\init_db.py
 ```powershell
 psql -d camera_assistant -f database/schema.sql
 ```
+
+手动 SQL 适合全新库参考。已有库升级和推荐模板相关补列仍建议优先运行 `python backend\init_db.py`，因为它会执行 ORM 建表、兼容迁移和序列校准。
 
 ## 数据边界
 

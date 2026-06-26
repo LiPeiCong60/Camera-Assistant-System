@@ -34,19 +34,6 @@ const cards = computed(() => [
   },
 ]);
 
-const highlights = computed(() => [
-  {
-    title: "内容沉淀量",
-    value: statistics.value.capture_count,
-    helper: "历史拍摄记录",
-  },
-  {
-    title: "AI 业务热度",
-    value: statistics.value.ai_task_count,
-    helper: "任务调用量",
-  },
-]);
-
 const moduleStatus = computed(() => [
   {
     name: "用户与套餐",
@@ -109,14 +96,6 @@ onMounted(() => {
       >
         <span>{{ card.label }}</span>
         <strong>{{ card.value }}</strong>
-      </article>
-    </section>
-
-    <section class="insight-grid">
-      <article v-for="item in highlights" :key="item.title" class="glass-card insight-card">
-        <span class="insight-card__title">{{ item.title }}</span>
-        <strong>{{ item.value }}</strong>
-        <p>{{ item.helper }}</p>
       </article>
     </section>
 
@@ -192,20 +171,17 @@ onMounted(() => {
   border-radius: 18px;
 }
 
-.stat-grid,
-.insight-grid {
+.stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 18px;
 }
 
-.stat-card,
-.insight-card {
+.stat-card {
   padding: 24px;
 }
 
-.stat-card span,
-.insight-card__title {
+.stat-card span {
   display: block;
   color: var(--ca-muted);
   font-size: 13px;
@@ -213,21 +189,13 @@ onMounted(() => {
   letter-spacing: 0.04em;
 }
 
-.stat-card strong,
-.insight-card strong {
+.stat-card strong {
   display: block;
   margin-top: 14px;
   font-size: clamp(42px, 6vw, 58px);
   line-height: 0.95;
   color: var(--ca-green-900);
   font-weight: 700;
-}
-
-.insight-card p {
-  margin: 14px 0 0;
-  color: var(--ca-muted);
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .stat-card--sand strong {

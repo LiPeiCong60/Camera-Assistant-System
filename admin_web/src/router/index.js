@@ -4,7 +4,6 @@ import AdminLayout from "../views/AdminLayout.vue";
 import AiProviderConfigsView from "../views/AiProviderConfigsView.vue";
 import AiTasksView from "../views/AiTasksView.vue";
 import CapturesView from "../views/CapturesView.vue";
-import DevicesView from "../views/DevicesView.vue";
 import LoginView from "../views/LoginView.vue";
 import PlansView from "../views/PlansView.vue";
 import RecommendedTemplatesView from "../views/RecommendedTemplatesView.vue";
@@ -76,13 +75,7 @@ const routes = [
       },
       {
         path: "devices",
-        name: "devices",
-        component: DevicesView,
-        meta: {
-          title: "设备管理",
-          layoutTitle: "设备管理",
-          layoutDescription: "查看和维护树莓派云台设备、绑定用户、在线状态与控制地址。",
-        },
+        redirect: { name: "overview" },
       },
       {
         path: "captures",

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies import get_current_admin, get_db_session
@@ -29,6 +29,7 @@ from backend.app.schemas import (
     PlanRead,
     PlanWriteRequest,
     RecommendedTemplateWriteRequest,
+    TemplateImageUploadRead,
     TemplateRead,
     UserCreateRequest,
     UserRead,
@@ -36,6 +37,7 @@ from backend.app.schemas import (
 )
 from backend.app.services.auth_service import AuthService
 from backend.app.services.admin_service import AdminService
+from backend.app.services.template_pose_service import TemplatePoseService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -247,16 +249,28 @@ def create_recommended_template(
     return ApiResponse(data=TemplateRead.model_validate(template))
 
 
-@router.post("/templates/recommended/upload-image", response_model=ApiResponse[CaptureUploadRead])
+@router.post("/templates/recommended/upload-image", response_model=ApiResponse[TemplateImageUploadRead])
 def upload_recommended_template_image(
     request: Request,
+    name: str | None = Form(None),
     file: UploadFile = File(...),
     current_admin: User = Depends(get_current_admin),
-) -> ApiResponse[CaptureUploadRead]:
+) -> ApiResponse[TemplateImageUploadRead]:
     if not _is_supported_image_upload(file):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only image uploads are supported")
     upload_data = _store_template_upload(request, current_admin, file)
-    return ApiResponse(message="template image uploaded", data=upload_data)
+    template_name = (name or Path(upload_data.original_filename).stem or "推荐模板").strip()
+    template_data = TemplatePoseService().create_template_data(
+        name=template_name,
+        source_image_url=upload_data.file_url,
+    )
+    return ApiResponse(
+        message="template image uploaded and analyzed",
+        data=TemplateImageUploadRead(
+            **upload_data.model_dump(),
+            template_data=template_data,
+        ),
+    )
 
 
 @router.put("/templates/recommended/{template_id}", response_model=ApiResponse[TemplateRead])

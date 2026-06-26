@@ -115,14 +115,18 @@ export async function createRecommendedTemplate(payload) {
   }
 }
 
-export async function uploadRecommendedTemplateImage(file) {
+export async function uploadRecommendedTemplateImage(file, options = {}) {
   try {
     const formData = new FormData();
     formData.append("file", file);
+    if (options.name) {
+      formData.append("name", options.name);
+    }
     const response = await http.post("/admin/templates/recommended/upload-image", formData, {
       headers: {
         "Content-Type": "multipart/form-data",
       },
+      timeout: 60000,
     });
     return response.data.data;
   } catch (error) {

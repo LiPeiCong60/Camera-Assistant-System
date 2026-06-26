@@ -14,11 +14,9 @@ const selectedTask = ref(null);
 
 const summary = computed(() => {
   const succeeded = aiTasks.value.filter((item) => item.status === "succeeded").length;
-  const configuredProvider = aiTasks.value.filter((item) => item.provider_name && item.provider_name !== "mock_ai").length;
   return {
     total: aiTasks.value.length,
     succeeded,
-    configuredProvider,
   };
 });
 
@@ -194,10 +192,6 @@ onMounted(() => {
       <article class="glass-card summary-card summary-card--accent">
         <span>成功任务</span>
         <strong>{{ summary.succeeded }}</strong>
-      </article>
-      <article class="glass-card summary-card">
-        <span>非 Mock Provider</span>
-        <strong>{{ summary.configuredProvider }}</strong>
       </article>
     </section>
 

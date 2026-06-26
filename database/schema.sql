@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS templates (
     source_image_url TEXT,
     preview_image_url TEXT,
     template_data JSONB NOT NULL DEFAULT '{}'::JSONB,
+    is_recommended_default BOOLEAN NOT NULL DEFAULT FALSE,
+    recommended_sort_order INTEGER NOT NULL DEFAULT 0,
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -190,6 +192,7 @@ CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
 CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
 CREATE INDEX IF NOT EXISTS idx_templates_status ON templates(status);
+CREATE INDEX IF NOT EXISTS idx_templates_recommended ON templates(is_recommended_default, recommended_sort_order);
 CREATE INDEX IF NOT EXISTS idx_capture_sessions_user_id ON capture_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_capture_sessions_device_id ON capture_sessions(device_id);
 CREATE INDEX IF NOT EXISTS idx_capture_sessions_status ON capture_sessions(status);

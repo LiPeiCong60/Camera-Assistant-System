@@ -9,10 +9,11 @@
 - 用户管理。
 - 套餐管理、额度配置和 AI Provider 绑定。
 - 推荐模板管理和图片上传。
-- 设备登记信息管理。
 - 媒体记录查看和删除。
 - AI 任务查看、删除和错误排查。
 - 多 AI Provider 配置管理。
+
+后端仍保留设备登记 CRUD 接口和 `DevicesView.vue` 代码，但当前前端路由 `/admin/devices` 会重定向到工作台，侧栏不展示设备管理入口。
 
 ## 技术组成
 
@@ -34,7 +35,7 @@
 | `/admin/users` | `UsersView.vue` | 用户管理 |
 | `/admin/plans` | `PlansView.vue` | 套餐管理 |
 | `/admin/templates` | `RecommendedTemplatesView.vue` | 推荐模板 |
-| `/admin/devices` | `DevicesView.vue` | 设备登记 |
+| `/admin/devices` | 重定向到工作台 | 设备登记前端入口当前未启用 |
 | `/admin/captures` | `CapturesView.vue` | 媒体记录 |
 | `/admin/ai-tasks` | `AiTasksView.vue` | AI 任务 |
 | `/admin/ai-provider` | `AiProviderConfigsView.vue` | AI Provider 配置 |
@@ -43,7 +44,13 @@
 
 后台维护的 Provider 会写入 `ai_provider_configs`。手机端创建 AI 任务时，后端按套餐和 Provider 状态选择可用配置。
 
+当前后端实际调用只实现 `openai_compatible`，后台表单中的 `anthropic_compatible`、`custom` 可保存配置但还需要后续补调用适配器。
+
 不要把真实 API Key 写入前端代码。Key 只通过后台表单提交到后端，由后端调用 Provider。
+
+## 推荐模板
+
+推荐模板页支持上传图片，后端会保存到 `/uploads/templates/...` 并自动生成 `template_data`。当前模板 JSON 主字段为 `bbox_norm`、`head_bbox_norm`、`pose_points_image`、`pose_points_bbox` 和肩部/面部锚点。
 
 ## 启动
 

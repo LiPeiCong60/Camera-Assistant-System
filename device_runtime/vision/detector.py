@@ -456,7 +456,7 @@ class MediaPipeVisionDetector(VisionDetector):
 
     @staticmethod
     def _ensure_model(path: Path, url: str) -> Path:
-        if MediaPipeVisionDetector._is_valid_task_file(path, try_repair=True):
+        if MediaPipeVisionDetector._is_valid_task_file(path):
             return path
         tmp = path.with_suffix(path.suffix + ".tmp")
         if tmp.exists():
@@ -465,7 +465,7 @@ class MediaPipeVisionDetector(VisionDetector):
             except OSError:
                 pass
         MediaPipeVisionDetector._download_file(url, tmp, timeout_s=30.0)
-        if not MediaPipeVisionDetector._is_valid_task_file(tmp, try_repair=True):
+        if not MediaPipeVisionDetector._is_valid_task_file(tmp):
             raise RuntimeError(f"Downloaded model is invalid: {tmp}")
         tmp.replace(path)
         return path
@@ -477,38 +477,22 @@ class MediaPipeVisionDetector(VisionDetector):
                 copyfileobj(resp, f, length=1024 * 256)
 
     @staticmethod
-    def _is_valid_task_file(path: Path, try_repair: bool = False) -> bool:
+    def _is_valid_task_file(path: Path) -> bool:
         if not path.exists() or path.stat().st_size <= 0:
             return False
         try:
-            with path.open("rb") as fh:
-                header = fh.read(8)
-            # MediaPipe task files are zip archives and should start with PK.
-            if not header.startswith(b"PK"):
-                if try_repair and MediaPipeVisionDetector._repair_task_file(path):
-                    return zipfile.is_zipfile(path)
+            if not zipfile.is_zipfile(path):
                 return False
-            return zipfile.is_zipfile(path)
+            with path.open("rb") as fh:
+                header = fh.read(4)
+            # Official MediaPipe task bundles can contain a tiny binary prefix
+            # before the ZIP signature. Stripping it leaves a ZIP Python can read,
+            # but MediaPipe Tasks can no longer load it.
+            if path.name == "pose_landmarker_lite.task" and header.startswith(b"PK"):
+                return False
+            return True
         except OSError:
             return False
-
-    @staticmethod
-    def _repair_task_file(path: Path) -> bool:
-        """Repairs task files that have a small binary prefix before the PK header."""
-        try:
-            data = path.read_bytes()
-        except OSError:
-            return False
-        sig = b"PK\x03\x04"
-        idx = data.find(sig)
-        if idx <= 0 or idx > 8:
-            return False
-        repaired = data[idx:]
-        try:
-            path.write_bytes(repaired)
-        except OSError:
-            return False
-        return True
 
     def _bbox_from_landmarks(self, landmarks, w: int, h: int) -> BBox | None:
         xs: list[int] = []

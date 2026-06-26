@@ -6,6 +6,7 @@
 
 - 手机端登录、注册、当前用户、套餐和当前订阅。
 - 手机端模板创建、删除、列表、缓存同步。
+- 推荐模板图片上传后自动识别人像姿态并生成模板 JSON。
 - 手机端拍摄会话、照片/视频媒体记录、历史列表。
 - 手机端照片分析、背景分析、连拍选优、多角度扫描分析。
 - 管理后台登录、用户、套餐、推荐模板、设备、媒体记录、AI 任务和 Provider 配置。
@@ -24,7 +25,7 @@
 | Pydantic | `app/schemas` | 请求/响应校验和字段归一化 |
 | httpx | `app/services/ai_provider_service.py` | 调用 OpenAI-compatible AI Provider |
 | python-multipart | 上传接口 | 图片/视频/模板文件上传 |
-| MediaPipe / OpenCV / Pillow | 模板辅助服务 | 后端兼容模板识别和图像读取；当前 App 优先走手机本地识别 |
+| MediaPipe / OpenCV / Pillow | 模板辅助服务 | 后台推荐模板上传和后端兼容模板识别；当前用户模板优先走手机本地识别 |
 
 ## 目录
 
@@ -121,7 +122,19 @@ AI 调用由 `app/services/ai_provider_service.py` 完成。当前主力格式�
 5. 后端把图片和结构化提示词发给 Provider。
 6. 后端解析 JSON，写入 `ai_tasks`。
 
-Provider 不可用时不会让手机崩溃，而是创建失败状态的 AI 任务并返回明确错误原因。
+Provider 不可用时不会让手机崩溃，而是创建失败状态的 AI 任务并返回明确错误原因。当前实际调用代码只实现 `openai_compatible`；`anthropic_compatible` 和 `custom` 可在配置层保存，调用适配器需要后续补齐。
+
+## 模板数据
+
+推荐模板和手机模板最终都写入 `templates.template_data`。当前主格式来自 `TemplateComposeEngine`：
+
+- `bbox_norm`、`head_bbox_norm`：人物框和头部框，格式为 `[x, y, w, h]`。
+- `pose_points_image`：整张图归一化关键点，用于手机 overlay。
+- `pose_points_bbox`：人物框内归一化关键点，用于模板投影。
+- `pose_points`：身体坐标系关键点，用于相似度计算。
+- `shoulder_anchor_norm_x/y`、`face_anchor_norm_x/y`、`head_anchor_norm_x/y`：模板构图对齐锚点。
+
+管理后台的 `/api/admin/templates/recommended/upload-image` 会把图片存入 `/uploads/templates/...`，再用 `TemplatePoseService` 自动生成这套结构。
 
 ## 多角度扫描
 

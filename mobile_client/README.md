@@ -21,11 +21,12 @@
 | Google ML Kit Pose Detection | 模板识别、实时人体关键点 | 识别肩部、面部相关点，生成归一化模板数据和实时跟随点 |
 | `http` | `MobileApiService`、`DeviceApiService` | 调用后端和设备端 HTTP API |
 | WebSocket | 设备联动手机帧推送 | 向 `device_runtime` 推送 NV21/JPEG 调试帧 |
-| `flutter_webrtc` | 保留实验链路 | WebRTC signaling 和未来实时传输实验 |
+| `flutter_webrtc` | 可选设备联动推流 | 详细设置中可选择优先尝试 WebRTC，失败时回到稳定主链路 |
 | `image_picker` | 模板上传、相册选择 | 从相册选择模板或照片 |
 | `path_provider` | 临时文件、缓存帧 | AI 扫描候选帧、临时图片处理 |
 | `shared_preferences` | 设置页和服务地址 | 保存后端地址、设备地址、详细设置参数 |
 | `image` | 图片编码/格式辅助 | 部分本地图像处理 |
+| `intl` | 历史页等列表 | 本地化日期时间格式化 |
 
 ## 主要页面
 
@@ -53,7 +54,7 @@ CameraController 初始化手机摄像头
 注意：
 
 - 主画面不使用树莓派摄像头。
-- 树莓派回传预览只保留为调试/兼容能力。
+- 树莓派回传 `preview-ws`、`preview.jpg` 和 WebRTC 预览只保留为调试、兼容或可选低延迟实验能力。
 - 所有跨端视觉坐标都使用 `0..1` 归一化坐标。
 - 默认预览不镜像；前置镜头、保存方向和 overlay 镜像分别处理。
 
@@ -79,13 +80,14 @@ CameraController 初始化手机摄像头
 
 模板数据保存在后端 `templates.template_data`，手机端使用同一结构：
 
-- `bbox`：人物主体框，归一化坐标。
-- `head_box`：头部/面部框，归一化坐标。
-- `points`：关键点字典，包含肩部、面部等点。
-- `segments`：骨架线段。
-- `shoulder_center`：肩部中心点。
-- `face_center`：面部中心点。
-- `source_image_url` / `image_path`：模板图片来源。
+- `bbox_norm`：人物主体框，格式 `[x, y, w, h]`。
+- `head_bbox_norm`：头部/面部框，格式 `[x, y, w, h]`。
+- `pose_points_image`：整张图归一化关键点，供 overlay 绘制。
+- `pose_points_bbox`：人物框内归一化关键点，供模板投影。
+- `pose_points`：身体坐标系关键点，供姿态相似度计算。
+- `shoulder_anchor_norm_x/y`：肩部对齐锚点。
+- `face_anchor_norm_x/y` / `head_anchor_norm_x/y`：面部或头部对齐锚点。
+- `source_image_url` / `preview_image_url` / `image_path`：模板图片来源。
 
 设备联动模板构图会根据用户选择的跟随目标，把实时人物的肩部中心点或面部中心点对齐到模板对应中心点。
 
