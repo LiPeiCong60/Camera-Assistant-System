@@ -1,4 +1,8 @@
-# 云影随行 Camera Assistant
+<p align="center">
+  <img src="./mobile_client/assets/branding/app_logo.png" alt="云影随行 Logo" width="120" />
+</p>
+
+<h1 align="center">云影随行 Camera Assistant</h1>
 
 云影随行是一个面向手机拍摄、树莓派云台控制和多模态 AI 构图分析的智能拍摄辅助系统，包含 Flutter 手机端、FastAPI 业务后端、设备运行时和 Vue 管理后台。
 
@@ -339,29 +343,21 @@ SILICONFLOW_TIMEOUT_S=60
 
 ## 功能展示
 
-仓库目前只提交了 App 图标和启动图，尚未提交正式功能截图。下面预留展示位，后续把图片补充到 `docs/images/` 后即可在 GitHub 自动显示：
+### 移动端与设备联动
 
-![移动端首页](./docs/images/mobile-home.png)
-![拍摄页与模板构图](./docs/images/mobile-camera-template.png)
-![设备联动页](./docs/images/device-link.png)
-![管理后台工作台](./docs/images/admin-overview.png)
-![AI Provider 配置](./docs/images/admin-ai-provider.png)
+<p>
+  <img src="./docs/images/mobile-home.png" alt="移动端首页" width="220" />
+  <img src="./docs/images/mobile-camera-template.png" alt="拍摄页与模板构图" width="220" />
+  <img src="./docs/images/device-link.png" alt="设备联动页" width="220" />
+</p>
 
-当前可引用的品牌图：
+### 管理后台与 AI 配置
 
-![云影随行 Logo](./mobile_client/assets/branding/app_logo.png)
-
-## 我的职责 / 个人贡献
-
-在这个项目中，我负责从需求分析到工程落地的完整实现：梳理“手机主预览、设备负责云台、后端统一 AI、后台负责运营”的系统边界；完成 Flutter 手机端拍摄、录像、模板构图、设备联动和 AI 扫描流程；设计 FastAPI 后端的数据模型、接口契约、AI 任务流转和 Provider 配置；实现设备运行时的会话管理、手机帧接收、目标跟踪和云台控制；完成 Vue 管理后台的用户、套餐、模板、媒体、AI 任务和模型配置页面；同时整理数据库结构、环境配置、运行说明和项目文档，保证项目可以用于演示、复现和求职展示。
-
-## 后续优化方向
-
-- **补齐部署工程**：增加 Docker Compose、生产环境配置模板、Nginx 反向代理示例和一键启动脚本。
-- **完善安全与权限**：为后台接口补充更细粒度的权限控制、操作审计、API Key 加密存储和敏感日志脱敏。
-- **增强 AI 能力**：在现有 OpenAI-compatible 视觉调用基础上，补充更多 Provider 适配器，并探索拍摄知识库 RAG、工具调用和可解释评分规则。
-- **提升测试覆盖**：继续增加后端接口测试、设备端控制算法测试、Flutter 集成测试和管理后台组件测试。
-- **优化前端体验**：补充正式截图、演示数据、失败状态引导，减少管理后台 chunk 体积，并优化真机联调配置流程。
+<p>
+  <img src="./docs/images/admin-overview.png" alt="管理后台工作台" width="420" />
+  <img src="./docs/images/admin-ai-tasks.png" alt="AI 任务列表" width="420" />
+  <img src="./docs/images/admin-ai-provider.png" alt="AI Provider 配置" width="420" />
+</p>
 
 ## 安全和隐私
 
